@@ -1,0 +1,27 @@
+{
+  "name": "ui-performance-poc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Proof of concept: browser-level UI performance testing with Playwright + Lighthouse, complementary to JMeter.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed",
+    "test:ui:debug": "playwright test --debug",
+    "lighthouse": "node src/lighthouse-audit.js",
+    "report": "node src/report-summary.js",
+    "validate:reports": "node scripts/validate-reports.js",
+    "all": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-all.ps1",
+    "clean": "node -e \"require('fs').rmSync('reports/raw',{recursive:true,force:true});console.log('Cleaned reports/raw')\""
+  },
+  "dependencies": {
+    "chrome-launcher": "^1.1.2",
+    "lighthouse": "^12.2.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.2"
+  }
+}

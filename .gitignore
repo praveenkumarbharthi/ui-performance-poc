@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Generated reports and raw artifacts
+reports/*
+!reports/.gitkeep
+
+# Playwright artifacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
