@@ -275,8 +275,19 @@ function buildMarkdown(summary) {
   if (!summary.thresholds.enabled) {
     lines.push('_Disabled (observation mode). No threshold can fail this build._');
   } else {
+    if (summary.thresholds.strict) {
+      lines.push('_Strict mode: a configured threshold with an unavailable metric fails the build._');
+      lines.push('');
+    }
     for (const c of summary.thresholds.checks) {
       lines.push(`- ${c.metric}: actual=${fmt(c.actual)} max=${fmt(c.max)} -> ${c.status}`);
+    }
+    if (summary.thresholds.unavailable && summary.thresholds.unavailable.length) {
+      lines.push('');
+      lines.push(
+        `_${summary.thresholds.unavailable.length} enforced threshold(s) could not be evaluated ` +
+          'because their metric was unavailable; the run cannot pass._'
+      );
     }
   }
   lines.push('');
@@ -294,7 +305,10 @@ function buildMarkdown(summary) {
     lines.push('');
     for (const b of summary.baseline.blockers || []) lines.push(`- BLOCKED: ${b}`);
     if (!summary.baseline.comparable) {
-      lines.push('_Baseline file present but not comparable (see blocked reasons above)._');
+      lines.push(
+        '_Baseline present but **inconclusive**: environments are not comparable, so no ' +
+          'regression or improvement is claimed (see blocked reasons above)._'
+      );
     } else {
       lines.push('| Metric | Baseline | Current | Delta | Change % | Verdict |');
       lines.push('| --- | --- | --- | --- | --- | --- |');
@@ -472,10 +486,12 @@ function main() {
 
     const functionalFailures = tests.summary.failed;
     const thresholdFailed = thresholds.enabled && thresholds.failures.length > 0;
+    const thresholdUnavailable = thresholds.enabled && thresholds.unavailable.length > 0;
     const decision = gate.determineStatus({
       functionalFailures,
       metricsCount: metricsList.length,
       thresholdFailed,
+      thresholdUnavailable,
       lighthousePresent: !!lhSummary,
       lighthouseFailed: lhStatus === 'failed',
       lighthousePartial: lhStatus === 'unstable',
@@ -485,6 +501,7 @@ function main() {
     summary.failureTypes = decision.failureTypes;
     summary.functionalFailures = functionalFailures;
     summary.thresholdFailed = thresholdFailed;
+    summary.thresholdUnavailable = thresholdUnavailable;
 
     fs.mkdirSync(path.dirname(config.paths.summaryJson), { recursive: true });
     fs.writeFileSync(config.paths.summaryJson, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');

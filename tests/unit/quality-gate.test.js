@@ -51,6 +51,48 @@ test('evaluateThresholds marks a missing metric as unavailable, not failed', () 
   const lcp = result.checks.find((c) => c.metric === 'lcpMs');
   assert.equal(lcp.status, 'unavailable');
   assert.equal(result.failures.length, 0);
+  assert.equal(result.unavailable.length, 1);
+  assert.equal(result.unavailable[0].metric, 'lcpMs');
+});
+
+test('evaluateThresholds fails an unavailable metric in strict mode', () => {
+  const result = gate.evaluateThresholds(
+    { enabled: true, strict: true, lcpMs: 100 },
+    { cumulativeLayoutShift: 0 }
+  );
+  assert.equal(result.unavailable.length, 1);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0].metric, 'lcpMs');
+  assert.equal(result.failures[0].status, 'unavailable');
+});
+
+test('evaluateThresholds has no unavailable entries when the metric is present', () => {
+  const result = gate.evaluateThresholds({ enabled: true, lcpMs: 100 }, { largestContentfulPaintMs: 90 });
+  assert.equal(result.unavailable.length, 0);
+  assert.equal(result.failures.length, 0);
+});
+
+test('determineStatus is unstable (never passed) when an enabled threshold metric is unavailable', () => {
+  const result = gate.determineStatus({
+    metricsCount: 1,
+    thresholdUnavailable: true,
+    lighthousePresent: true,
+    playwrightReportPresent: true,
+  });
+  assert.equal(result.status, gate.STATUS.UNSTABLE);
+  assert.ok(result.failureTypes.includes(gate.FAILURE_TYPE.MISSING_DATA));
+});
+
+test('determineStatus fails when a strict threshold makes the missing metric a failure', () => {
+  const result = gate.determineStatus({
+    metricsCount: 1,
+    thresholdFailed: true,
+    thresholdUnavailable: true,
+    lighthousePresent: true,
+    playwrightReportPresent: true,
+  });
+  assert.equal(result.status, gate.STATUS.FAILED);
+  assert.ok(result.failureTypes.includes(gate.FAILURE_TYPE.THRESHOLD));
 });
 
 test('determineStatus reports no-data when nothing ran', () => {

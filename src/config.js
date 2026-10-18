@@ -110,6 +110,9 @@ const config = {
   // Disabled by default (observation mode); a disabled threshold cannot fail a build.
   thresholds: {
     enabled: envBool(process.env.PERF_THRESHOLDS_ENABLED, false),
+    // When strict, a configured threshold whose metric is unavailable fails the
+    // gate instead of downgrading the run to unstable.
+    strict: envBool(process.env.THRESHOLDS_STRICT, false),
     lcpMs: envNum(process.env.THRESHOLD_LCP_MS, null),
     cls: envNum(process.env.THRESHOLD_CLS, null),
     journeyMs: envNum(process.env.THRESHOLD_JOURNEY_MS, null),

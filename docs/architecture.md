@@ -97,12 +97,14 @@ listed in `summary.failureTypes`:
 | `performance-threshold-failure` | An **enabled** threshold was exceeded | `failed` | Exit code 1; build fails |
 | `lighthouse-audit-failure` | A configured page audit could not run | `unstable` | Build marked unstable, reported separately |
 | `lighthouse-partial-audit` | Some pages audited, others skipped | `unstable` | Build marked unstable — never reported as a pass |
-| `missing-data` | Required metrics or Lighthouse evidence is absent | `unstable` / `no-data` | Downgraded, never a silent pass |
+| `missing-data` | Required metrics or Lighthouse evidence is absent | `unstable` / `no-data` | Downgraded, never a silent pass; `failed` when an enforced threshold is missing and `THRESHOLDS_STRICT=true` |
 
 Rules that keep the status honest:
 
 - A disabled threshold is **observation-only** and can never fail a build.
 - Enabled-but-unconfigured thresholds produce a warning, not an implicit failure.
+- An enforced threshold whose metric is unavailable cannot pass: the run is downgraded to `unstable`,
+  or failed outright in strict mode (`THRESHOLDS_STRICT=true`).
 - Missing evidence (`missing-data`) can never be presented as a pass.
 - A passing Playwright test cannot mask a threshold breach — the gate evaluates functional and
   threshold outcomes independently.

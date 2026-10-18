@@ -55,7 +55,16 @@ function checkHtmlDir(label, dir, { optional = false } = {}) {
 }
 
 // Validates the Lighthouse summary plus every per-page report it references.
-function checkLighthouse(label, dir, { optional = false } = {}) {
+// Artifact validity (files exist and parse) is deliberately kept separate from
+// test success (whether the audits passed): failed/skipped pages are reported in
+// the counts but do not by themselves fail this check.
+function checkLighthouse(label, dir, options = {}) {
+  const {
+    optional = false,
+    root = config.projectRoot,
+    expectedPages = config.lighthouse.pages.map((p) => p.name),
+  } = options;
+
   const summaryFile = path.join(dir, 'summary.json');
   const base = checkJson(label, summaryFile, { optional });
   if (!base.ok) return base;
@@ -68,29 +77,49 @@ function checkLighthouse(label, dir, { optional = false } = {}) {
   }
 
   const pages = Array.isArray(summary.pages) ? summary.pages : [];
+  const successful = pages.filter((pg) => pg.status === 'ok');
+  const failed = pages.filter((pg) => pg.status === 'failed');
+  const skipped = pages.filter((pg) => pg.status === 'skipped');
+  const reported = new Set(pages.map((pg) => pg.name));
+  const missingPages = expectedPages.filter((name) => !reported.has(name));
+
+  // Counts are always reported so partial completion is explicit rather than
+  // hidden behind a single "ok" flag.
+  const counts =
+    `expected=${expectedPages.length}, successful=${successful.length}, ` +
+    `failed=${failed.length}, skipped=${skipped.length}` +
+    (missingPages.length ? `, missing=${missingPages.length}` : '');
+
   if (pages.length === 0) {
-    return { ...base, ok: false, reason: 'no page results in summary' };
+    return { ...base, ok: false, reason: `no page results in summary (${counts})` };
+  }
+  if (missingPages.length > 0) {
+    // No evidence at all for a configured page: an artifact-validity problem,
+    // distinct from a page that ran and failed.
+    return {
+      ...base,
+      ok: false,
+      reason: `configured page(s) not reported: ${missingPages.join(', ')} (${counts})`,
+    };
+  }
+  if (successful.length === 0) {
+    return { ...base, ok: false, reason: `no successful page audit (${counts})` };
   }
 
-  const ok = pages.filter((pg) => pg.status === 'ok');
-  if (ok.length === 0) {
-    return { ...base, ok: false, reason: `all ${pages.length} page audit(s) failed` };
-  }
-
-  const missing = [];
-  for (const pg of ok) {
+  const missingFiles = [];
+  for (const pg of successful) {
     for (const kind of ['html', 'json']) {
       const relPath = pg.reports && pg.reports[kind];
       if (!relPath) continue;
-      const abs = path.join(config.projectRoot, relPath);
-      if (!fs.existsSync(abs) || fs.statSync(abs).size === 0) missing.push(relPath);
+      const abs = path.isAbsolute(relPath) ? relPath : path.join(root, relPath);
+      if (!fs.existsSync(abs) || fs.statSync(abs).size === 0) missingFiles.push(relPath);
     }
   }
-  if (missing.length > 0) {
-    return { ...base, ok: false, reason: `missing page report(s): ${missing.join(', ')}` };
+  if (missingFiles.length > 0) {
+    return { ...base, ok: false, reason: `missing page report(s): ${missingFiles.join(', ')} (${counts})` };
   }
 
-  return { ...base, reason: `valid-json (${ok.length}/${pages.length} pages, reports present)` };
+  return { ...base, reason: `valid-json (${counts})` };
 }
 
 // Validates the consolidated summary's structure, status vocabulary, and that
@@ -173,4 +202,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { main };
+module.exports = { main, checkLighthouse, checkConsolidatedSummary };

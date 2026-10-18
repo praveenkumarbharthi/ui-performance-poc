@@ -5,8 +5,9 @@
 //    validation use catchError so a failure does not skip later stages or the
 //    post-always JUnit/archive steps.
 //  - Quality gates reflect the result: functional failures and enforced threshold
-//    breaches set the build to FAILURE; a non-critical Lighthouse failure sets it
-//    to UNSTABLE instead of silently passing.
+//    breaches set the build to FAILURE; a non-critical Lighthouse failure OR a
+//    partial/incomplete audit (which still exits 0) sets it to UNSTABLE instead of
+//    silently passing.
 pipeline {
   agent { label 'windows' }
 
@@ -22,6 +23,8 @@ pipeline {
     SAUCE_PASSWORD          = "${env.SAUCE_PASSWORD ?: 'secret_sauce'}"
     PLAYWRIGHT_BROWSER      = 'chromium'
     PERF_THRESHOLDS_ENABLED = "${env.PERF_THRESHOLDS_ENABLED ?: 'false'}"
+    // Strict thresholds: an enforced threshold whose metric is unavailable fails the gate.
+    THRESHOLDS_STRICT       = "${env.THRESHOLDS_STRICT ?: 'false'}"
     // Unique run id so raw artifacts never overwrite previous evidence.
     RUN_ID                  = "${env.BUILD_TAG ?: 'jenkins'}-${env.BUILD_NUMBER ?: '0'}"
   }
@@ -100,13 +103,22 @@ pipeline {
 
     stage('Lighthouse audit') {
       steps {
-        // Lighthouse is network/Chrome dependent: record the failure and keep the
-        // UI journey result valid by marking the build unstable instead of failed.
+        // Lighthouse is network/Chrome dependent, so it marks the build UNSTABLE
+        // rather than FAILURE and keeps the UI journey result valid. A *partial*
+        // audit (some pages failed or were skipped) still exits 0, so the exit code
+        // alone is not enough - the audit's own summary status is inspected too,
+        // otherwise incomplete results would produce a green (SUCCESS) build.
         script {
-          def lhStatus = bat(returnStatus: true, script: 'call npm run lighthouse')
-          if (lhStatus != 0) {
-            echo "WARNING: Lighthouse audit failed (exit ${lhStatus}). See reports/lighthouse/summary.json."
-            unstable('Lighthouse audit failed; UI journey results are still valid.')
+          def lhExit = bat(returnStatus: true, script: 'call npm run lighthouse')
+          def lhStatus = bat(
+            returnStdout: true,
+            script: '''node -e "const fs=require('fs');const f='reports/lighthouse/summary.json';process.stdout.write(fs.existsSync(f)?(JSON.parse(fs.readFileSync(f,'utf8')).status||'unknown'):'missing')"'''
+          ).trim()
+          echo "Lighthouse: exit=${lhExit}, audit status=${lhStatus}"
+          if (lhStatus == 'unstable') {
+            unstable('Lighthouse audit only partially completed (some pages failed or were skipped); results are incomplete, not a full pass. See reports/lighthouse/summary.json.')
+          } else if (lhStatus == 'failed' || lhStatus == 'missing' || lhStatus == 'unknown' || lhExit != 0) {
+            unstable('Lighthouse audit did not complete cleanly (status=' + lhStatus + ', exit=' + lhExit + '); UI journey results are still valid. See reports/lighthouse/summary.json.')
           }
         }
       }

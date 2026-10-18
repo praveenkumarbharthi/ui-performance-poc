@@ -60,30 +60,46 @@ function classify(baselineValue, currentSummary, currentVariabilityPct, opts = {
   return { delta, deltaPct, verdict: improved ? 'improvement' : 'regression' };
 }
 
-// Hard incompatibilities block comparison; soft differences only warn.
+// Environment fields that must be present on BOTH sides for a comparison to mean
+// anything. Without them a difference cannot be attributed to the change under
+// test, so the comparison is inconclusive rather than a reliable result.
+const MANDATORY_ENV_FIELDS = [
+  { label: 'browser', get: (env) => env.browser },
+  { label: 'os', get: (env) => env.os },
+  { label: 'platform', get: (env) => env.platform },
+  { label: 'viewport width', get: (env) => (env.viewport || {}).width },
+];
+
+function isMissing(value) {
+  return value === null || value === undefined || value === '';
+}
+
+// Hard incompatibilities (and missing mandatory metadata) block comparison and
+// make it inconclusive; soft differences only warn.
 function checkCompatibility(baseEnv, curEnv) {
   const warnings = [];
   const blockers = [];
   const b = baseEnv || {};
   const c = curEnv || {};
 
-  if (b.browser && c.browser && b.browser !== c.browser) {
-    blockers.push(`browser differs (baseline=${b.browser}, current=${c.browser})`);
-  } else if (b.browser && !c.browser) {
-    warnings.push('current browser unknown');
-  }
-  if (b.os && c.os && b.os !== c.os) {
-    blockers.push(`OS differs (baseline=${b.os}, current=${c.os})`);
-  }
-  if (b.platform && c.platform && b.platform !== c.platform) {
-    blockers.push(`platform differs (baseline=${b.platform}, current=${c.platform})`);
+  for (const field of MANDATORY_ENV_FIELDS) {
+    const baseValue = field.get(b);
+    const curValue = field.get(c);
+    const baseMissing = isMissing(baseValue);
+    const curMissing = isMissing(curValue);
+    if (baseMissing && curMissing) {
+      blockers.push(`${field.label} missing on both baseline and current (required for comparison)`);
+    } else if (baseMissing) {
+      blockers.push(`${field.label} missing in baseline environment (required for comparison)`);
+    } else if (curMissing) {
+      blockers.push(`${field.label} missing in current environment (required for comparison)`);
+    } else if (baseValue !== curValue) {
+      blockers.push(`${field.label} differs (baseline=${baseValue}, current=${curValue})`);
+    }
   }
 
   const bView = b.viewport || {};
   const cView = c.viewport || {};
-  if (bView.width && cView.width && bView.width !== cView.width) {
-    blockers.push(`viewport width differs (baseline=${bView.width}, current=${cView.width})`);
-  }
   if (bView.height && cView.height && bView.height !== cView.height) {
     warnings.push(`viewport height differs (baseline=${bView.height}, current=${cView.height})`);
   }
@@ -124,14 +140,26 @@ function collectSamples(metricsList) {
 }
 
 function compareBaseline(current, baseline, opts = {}) {
-  const result = { attempted: !!baseline, comparable: false, warnings: [], blockers: [], deltas: [] };
+  const result = {
+    attempted: !!baseline,
+    comparable: false,
+    inconclusive: false,
+    warnings: [],
+    blockers: [],
+    deltas: [],
+  };
   if (!baseline) return result;
 
   const compat = checkCompatibility(baseline.environment, current.environment);
   result.warnings = compat.warnings;
   result.blockers = compat.blockers;
   if (!compat.compatible) {
-    result.warnings.push('Comparison blocked: environments are incompatible.');
+    // No deltas are computed, so no regression/improvement is implied: the
+    // comparison is explicitly inconclusive.
+    result.inconclusive = true;
+    result.warnings.push(
+      'Comparison is inconclusive: environments are incompatible or lack the metadata required for a reliable result.'
+    );
     return result;
   }
 

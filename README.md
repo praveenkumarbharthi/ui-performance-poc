@@ -55,7 +55,7 @@ npm run check:env              # validate toolchain + configuration
 `.env.example` -> `.env` variables: `BASE_URL`, `SAUCE_USERNAME`, `SAUCE_PASSWORD`, `LOG_LEVEL`,
 `LCP_OBSERVATION_MS`, `RUN_ID`, `RUN_STARTED_AT`, `REPORTS_DIR`, `LIGHTHOUSE_PAGES` (JSON
 `{name, path, requiresAuth}`), `CHROME_PATH`, `PERF_THRESHOLDS_ENABLED`, `THRESHOLD_LCP_MS`,
-`THRESHOLD_CLS`, `THRESHOLD_JOURNEY_MS`, `BASELINE_FILE`, `BASELINE_NOISE_PCT`,
+`THRESHOLD_CLS`, `THRESHOLD_JOURNEY_MS`, `THRESHOLDS_STRICT`, `BASELINE_FILE`, `BASELINE_NOISE_PCT`,
 `BASELINE_VARIABILITY_PCT`. Only public SauceDemo demo credentials are used.
 
 ## Key commands
@@ -77,7 +77,9 @@ npm run check:env              # validate toolchain + configuration
 Overall status is `passed`, `failed`, `unstable`, or `no-data`. Functional failures and enforced
 threshold breaches (`PERF_THRESHOLDS_ENABLED=true`) fail the build; a failed or partial Lighthouse
 audit, or missing evidence, yields `unstable` so incomplete runs are never mistaken for success.
-Thresholds are observation-only until enabled with an agreed baseline.
+An enforced threshold whose metric is unavailable downgrades the run to `unstable`; set
+`THRESHOLDS_STRICT=true` to fail it instead. Thresholds are observation-only until enabled with an
+agreed baseline.
 
 `Jenkinsfile`: Windows-agent pipeline - run marker, tool/config checks, `npm ci`, unit tests,
 `npm audit --audit-level=high`, Chromium install, journey, Lighthouse, report, validate. Evidence is

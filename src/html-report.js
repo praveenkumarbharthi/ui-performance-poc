@@ -186,12 +186,24 @@ function renderDashboard(summary) {
   } else {
     parts.push('<p class="meta">Enabled but no threshold value configured.</p>');
   }
+  if (th.enabled && th.strict) {
+    parts.push('<p class="meta">Strict mode: a configured threshold with an unavailable metric fails the build.</p>');
+  }
+  if (th.enabled && (th.unavailable || []).length) {
+    parts.push(
+      `<p class="meta">${esc(
+        th.unavailable.length
+      )} enforced threshold(s) could not be evaluated because their metric was unavailable; the run cannot pass.</p>`
+    );
+  }
 
   // Baseline
   if (s.baseline && s.baseline.attempted) {
     parts.push('<h2>Baseline comparison</h2>');
     if (!s.baseline.comparable) {
-      parts.push('<p class="meta">Baseline file present but not comparable.</p>');
+      parts.push(
+        '<p class="meta">Baseline present but <strong>inconclusive</strong>: the environments are not comparable, so no regression/improvement is claimed.</p>'
+      );
     } else {
       parts.push(
         table(

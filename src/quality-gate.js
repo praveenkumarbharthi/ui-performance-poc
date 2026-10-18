@@ -35,9 +35,23 @@ const THRESHOLD_DEFS = [
 // Thresholds are observation-only while disabled, so a disabled configuration can
 // never fail a build. Enabled-but-unconfigured is reported as a warning rather
 // than an implicit failure.
+//
+// A configured threshold whose metric is unavailable is missing evidence, so it
+// is never treated as a pass: it is reported in `unavailable`, which downgrades
+// the overall run to `unstable` (see determineStatus). When `strict` is enabled
+// the missing metric is treated as a failure instead, so an enforced gate cannot
+// be silently skipped.
 function evaluateThresholds(thresholdsConfig, metrics) {
   const cfg = thresholdsConfig || {};
-  const result = { enabled: !!cfg.enabled, checks: [], failures: [], warnings: [] };
+  const strict = !!cfg.strict;
+  const result = {
+    enabled: !!cfg.enabled,
+    strict,
+    checks: [],
+    failures: [],
+    unavailable: [],
+    warnings: [],
+  };
   if (!result.enabled) return result;
 
   const defs = THRESHOLD_DEFS.map((def) => ({
@@ -66,7 +80,20 @@ function evaluateThresholds(thresholdsConfig, metrics) {
     }
 
     if (!Number.isFinite(def.actual)) {
-      result.checks.push({ ...def, status: 'unavailable' });
+      const check = { ...def, status: 'unavailable', strict };
+      result.checks.push(check);
+      result.unavailable.push(check);
+      if (strict) {
+        result.failures.push(check);
+        result.warnings.push(
+          `Threshold ${def.metric} is enforced (strict) but its metric is unavailable; failing the gate.`
+        );
+      } else {
+        result.warnings.push(
+          `Threshold ${def.metric} is configured but its metric is unavailable; the run cannot pass. ` +
+            'Set THRESHOLDS_STRICT=true to fail the build instead of downgrading it.'
+        );
+      }
       continue;
     }
 
@@ -86,11 +113,14 @@ function evaluateThresholds(thresholdsConfig, metrics) {
 // Missing evidence must never read as success, so an absent Lighthouse summary or
 // absent browser metrics downgrades the run to `unstable` rather than `passed`.
 // A partial Lighthouse run (some pages skipped) is likewise `unstable`, never
-// `passed`.
+// `passed`. A configured threshold whose metric is unavailable is missing
+// evidence too: it is `unstable` (never `passed`), or `failed` when strict mode
+// already recorded it as a threshold failure.
 function determineStatus(input = {}) {
   const functionalFailures = Number(input.functionalFailures) || 0;
   const metricsCount = Number(input.metricsCount) || 0;
   const thresholdFailed = !!input.thresholdFailed;
+  const thresholdUnavailable = !!input.thresholdUnavailable;
   const lighthousePresent = !!input.lighthousePresent;
   const lighthouseFailed = !!input.lighthouseFailed;
   const lighthousePartial = !!input.lighthousePartial;
@@ -107,6 +137,7 @@ function determineStatus(input = {}) {
   if (thresholdFailed) failureTypes.add(FAILURE_TYPE.THRESHOLD);
   if (lighthouseFailed) failureTypes.add(FAILURE_TYPE.LIGHTHOUSE);
   else if (lighthousePartial) failureTypes.add(FAILURE_TYPE.LIGHTHOUSE_PARTIAL);
+  if (thresholdUnavailable) failureTypes.add(FAILURE_TYPE.MISSING_DATA);
 
   if (functionalFailures > 0 || thresholdFailed) {
     return { status: STATUS.FAILED, failureTypes: [...failureTypes] };

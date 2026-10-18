@@ -168,6 +168,37 @@ test('fails the build on an enforced threshold breach', () => {
   assert.ok(summary.failureTypes.includes('performance-threshold-failure'));
 });
 
+test('is unstable (not passed) when an enabled threshold metric is missing', () => {
+  const reportsDir = makeReportsDir();
+  writeJson(path.join(reportsDir, 'playwright', 'results.json'), playwrightResults());
+  writeMetrics(reportsDir, RUN_ID, metricsRun(RUN_ID, { lcp: null }));
+  writeJson(path.join(reportsDir, 'lighthouse', 'summary.json'), lighthouseSummary());
+  const { code } = runReport(reportsDir, {
+    PERF_THRESHOLDS_ENABLED: 'true',
+    THRESHOLD_LCP_MS: '2500',
+  });
+  const summary = readSummary(reportsDir);
+  assert.equal(summary.status, 'unstable');
+  assert.equal(code, 0);
+  assert.ok(summary.failureTypes.includes('missing-data'));
+});
+
+test('fails the build when a strict threshold metric is missing', () => {
+  const reportsDir = makeReportsDir();
+  writeJson(path.join(reportsDir, 'playwright', 'results.json'), playwrightResults());
+  writeMetrics(reportsDir, RUN_ID, metricsRun(RUN_ID, { lcp: null }));
+  writeJson(path.join(reportsDir, 'lighthouse', 'summary.json'), lighthouseSummary());
+  const { code } = runReport(reportsDir, {
+    PERF_THRESHOLDS_ENABLED: 'true',
+    THRESHOLDS_STRICT: 'true',
+    THRESHOLD_LCP_MS: '2500',
+  });
+  const summary = readSummary(reportsDir);
+  assert.equal(summary.status, 'failed');
+  assert.equal(code, 1);
+  assert.ok(summary.failureTypes.includes('performance-threshold-failure'));
+});
+
 test('is unstable (not passed) on a partial Lighthouse audit', () => {
   const reportsDir = makeReportsDir();
   writeJson(path.join(reportsDir, 'playwright', 'results.json'), playwrightResults());
