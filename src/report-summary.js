@@ -10,6 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const logger = require('./logger');
+const gate = require('./quality-gate');
+const htmlReport = require('./html-report');
+const baseline = require('./baseline');
 
 function readJsonIfExists(file) {
   if (!fs.existsSync(file)) {
@@ -27,6 +30,33 @@ function readJsonIfExists(file) {
     logger.error(`Failed to parse JSON ${file}: ${err.message}`);
     return null;
   }
+}
+
+function readTextIfExists(file) {
+  try {
+    if (!fs.existsSync(file)) return null;
+    const text = fs.readFileSync(file, 'utf8').trim();
+    return text || null;
+  } catch (err) {
+    return null;
+  }
+}
+
+// A re-used artifact from an earlier run must never be presented as current
+// evidence. `runStartedAtMs` comes from RUN_STARTED_AT (set by the pipeline or a
+// run-started-at.txt marker); without it the check is skipped rather than guessed.
+function isStaleArtifact(isoTime, runStartedAtMs, label) {
+  if (!isoTime || !Number.isFinite(runStartedAtMs)) return false;
+  const t = Date.parse(isoTime);
+  if (!Number.isFinite(t)) return false;
+  if (t < runStartedAtMs - 1000) {
+    logger.warn(
+      `Ignoring stale ${label}: generated ${isoTime}, before run start ` +
+        `${new Date(runStartedAtMs).toISOString()}.`
+    );
+    return true;
+  }
+  return false;
 }
 
 // Prefer an explicit RUN_ID; otherwise fall back to the most recent raw run
@@ -94,98 +124,28 @@ function writeMergedMetrics(metricsList) {
   return config.paths.browserMetrics;
 }
 
-// Disabled thresholds can never fail the build.
+// Thin adapter: threshold rules live in src/quality-gate.js so the exact same
+// logic (and unit tests) apply to the Playwright spec and this aggregator.
 function evaluateThresholds(metricsList) {
-  const result = { enabled: config.thresholds.enabled, checks: [], failures: [] };
-  if (!config.thresholds.enabled) return result;
-
   const first = metricsList[0];
-  const defs = [
-    {
-      metric: 'lcpMs',
-      actual: first ? first.metrics.largestContentfulPaintMs : null,
-      max: config.thresholds.lcpMs,
-    },
-    {
-      metric: 'cls',
-      actual: first ? first.metrics.cumulativeLayoutShift : null,
-      max: config.thresholds.cls,
-    },
-    {
-      metric: 'journeyMs',
-      actual: first ? first.metrics.interactionTimings['total-journey-duration'] : null,
-      max: config.thresholds.journeyMs,
-    },
-  ];
-
-  for (const def of defs) {
-    if (def.max === null || def.max === undefined) continue;
-    if (!Number.isFinite(def.max) || def.max < 0) {
-      result.checks.push({ ...def, status: 'invalid-input' });
-      result.failures.push({ metric: def.metric, reason: 'invalid threshold input' });
-      continue;
-    }
-    if (def.actual === null || def.actual === undefined) {
-      result.checks.push({ ...def, status: 'unavailable' });
-      continue;
-    }
-    const passed = def.actual <= def.max;
-    const check = {
-      ...def,
-      overshoot: passed ? 0 : +(def.actual - def.max).toFixed(3),
-      status: passed ? 'passed' : 'failed',
-    };
-    result.checks.push(check);
-    if (!passed) result.failures.push(check);
-  }
-  return result;
+  return gate.evaluateThresholds(config.thresholds, first ? first.metrics : {});
 }
 
 // Optional baseline comparison - only when a valid, comparable baseline exists.
+// All rules live in src/baseline.js (pure + unit tested).
 function compareBaseline(currentSummary) {
   const file = config.baseline.file;
-  const result = { attempted: fs.existsSync(file), comparable: false, warnings: [], deltas: [] };
-  if (!result.attempted) return result;
-
-  const baseline = readJsonIfExists(file);
-  if (!baseline) return result;
-
-  const curEnv = currentSummary.environment || {};
-  const baseEnv = baseline.environment || {};
-  if (baseEnv.browser && curEnv.playwright && baseEnv.browser !== curEnv.playwright) {
-    result.warnings.push(`Browser differs (baseline=${baseEnv.browser}, current=${curEnv.playwright}).`);
+  if (!fs.existsSync(file)) {
+    return { attempted: false, comparable: false, warnings: [], blockers: [], deltas: [] };
   }
-  if (baseEnv.os && curEnv.os && baseEnv.os !== curEnv.os) {
-    result.warnings.push(`OS differs (baseline=${baseEnv.os}, current=${curEnv.os}).`);
+  const saved = readJsonIfExists(file);
+  if (!saved) {
+    return { attempted: true, comparable: false, warnings: ['baseline file unreadable'], blockers: [], deltas: [] };
   }
-  if (
-    baseEnv.lighthouseVersion &&
-    curEnv.lighthouseVersion &&
-    baseEnv.lighthouseVersion !== curEnv.lighthouseVersion
-  ) {
-    result.warnings.push(
-      `Lighthouse version differs (baseline=${baseEnv.lighthouseVersion}, current=${curEnv.lighthouseVersion}).`
-    );
-  }
-
-  const cur = currentSummary.browserMetrics && currentSummary.browserMetrics[0];
-  const base = baseline.browserMetrics && baseline.browserMetrics[0];
-  if (cur && base) {
-    const pairs = [
-      ['largestContentfulPaintMs', 'LCP (ms)'],
-      ['cumulativeLayoutShift', 'CLS'],
-      ['firstContentfulPaintMs', 'FCP (ms)'],
-    ];
-    for (const [key, label] of pairs) {
-      const c = cur.metrics[key];
-      const b = base.metrics[key];
-      if (Number.isFinite(c) && Number.isFinite(b)) {
-        result.deltas.push({ metric: label, baseline: b, current: c, delta: +(c - b).toFixed(3) });
-      }
-    }
-    result.comparable = result.deltas.length > 0;
-  }
-  return result;
+  return baseline.compareBaseline(currentSummary, saved, {
+    noisePct: config.baseline.noisePct,
+    variabilityPct: config.baseline.variabilityPct,
+  });
 }
 
 function fmt(value) {
@@ -200,6 +160,11 @@ function buildMarkdown(summary) {
   lines.push(`- **Generated:** ${summary.generatedAt}`);
   lines.push(`- **Base URL:** ${summary.baseUrl}`);
   lines.push(`- **Overall status:** ${summary.status}`);
+  lines.push(
+    `- **Failure reasons:** ${
+      summary.failureTypes && summary.failureTypes.length ? summary.failureTypes.join(', ') : 'none'
+    }`
+  );
   lines.push('');
   lines.push('## Test outcomes');
   lines.push('');
@@ -251,6 +216,18 @@ function buildMarkdown(summary) {
     lines.push('');
     lines.push('> These are custom click-to-visible measurements, NOT INP. INP is not measured.');
     lines.push('');
+    const routeChanges = (m.metrics.pages || [])
+      .filter((p) => p.sameDocument)
+      .map((p) => p.name);
+    if (routeChanges.length) {
+      lines.push(
+        `> Checkpoints reached by client-side route change (no new document load): ${routeChanges.join(
+          ', '
+        )}. Navigation timing and FCP apply only to the initial document; the per-step cost of those ` +
+          'checkpoints is in the interaction timings above.'
+      );
+      lines.push('');
+    }
   } else {
     lines.push('_No browser metrics artifacts found._');
     lines.push('');
@@ -258,28 +235,38 @@ function buildMarkdown(summary) {
 
   lines.push('## Lighthouse (lab audit, per page)');
   lines.push('');
-  const lhPages = summary.lighthouse ? summary.lighthouse.pages || [] : [];
-  if (lhPages.length) {
-    lines.push('| Page | Auth | Performance | Accessibility | Best practices | SEO |');
-    lines.push('| --- | --- | --- | --- | --- | --- |');
+  const lh = summary.lighthouse || {};
+  const lhPages = lh.pages || [];
+  if (lhPages.length || lh.available) {
+    lines.push(`- Lighthouse status: ${fmt(lh.status)}`);
+    if (lh.outcomes) {
+      lines.push(
+        `- Outcomes: ok=${lh.outcomes.ok} failed=${lh.outcomes.failed} skipped=${lh.outcomes.skipped} of ${lh.outcomes.total}`
+      );
+    }
+    lines.push('');
+    lines.push('| Page | Status | Auth | Performance | Accessibility | Best practices | SEO |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
     for (const p of lhPages) {
       const c = p.categories || {};
       lines.push(
-        `| ${p.name} | ${p.authenticated ? 'yes' : 'no'} | ${fmt(c.performance)} | ${fmt(c.accessibility)} | ${fmt(c['best-practices'])} | ${fmt(c.seo)} |`
+        `| ${p.name} | ${p.status} | ${p.authenticated ? 'yes' : 'no'} | ${fmt(c.performance)} | ${fmt(c.accessibility)} | ${fmt(c['best-practices'])} | ${fmt(c.seo)} |`
       );
     }
     lines.push('');
     for (const p of lhPages) {
-      if (p.status === 'failed') {
-        lines.push(`- **${p.name}** failed: ${p.error || 'unknown error'}`);
-      }
+      if (p.status === 'failed') lines.push(`- **${p.name}** failed: ${p.error || 'unknown error'}`);
+      if (p.status === 'skipped') lines.push(`- **${p.name}** skipped: ${p.error || 'not audited'}`);
     }
-    lines.push(`Lighthouse version: ${summary.lighthouse.version || 'n/a'}`);
     lines.push('');
-    lines.push('> Lab audit - not real-user monitoring; not comparable to journey timings.');
+    lines.push(`Lighthouse version: ${lh.version || 'n/a'}`);
+    lines.push('');
+    lines.push(
+      '> Lab audit - not real-user monitoring; not comparable to journey timings. A partial run (skipped pages) is not complete success.'
+    );
     lines.push('');
   } else {
-    lines.push(`_Lighthouse summary unavailable${summary.lighthouse && summary.lighthouse.error ? `: ${summary.lighthouse.error}` : ''}._`);
+    lines.push(`_Lighthouse summary unavailable${lh.error ? `: ${lh.error}` : ''}._`);
     lines.push('');
   }
 
@@ -305,16 +292,23 @@ function buildMarkdown(summary) {
   if (summary.baseline && summary.baseline.attempted) {
     lines.push('## Baseline comparison');
     lines.push('');
+    for (const b of summary.baseline.blockers || []) lines.push(`- BLOCKED: ${b}`);
     if (!summary.baseline.comparable) {
-      lines.push('_Baseline file present but not comparable._');
+      lines.push('_Baseline file present but not comparable (see blocked reasons above)._');
     } else {
-      lines.push('| Metric | Baseline | Current | Delta |');
-      lines.push('| --- | --- | --- | --- |');
+      lines.push('| Metric | Baseline | Current | Delta | Change % | Verdict |');
+      lines.push('| --- | --- | --- | --- | --- | --- |');
       for (const d of summary.baseline.deltas) {
-        lines.push(`| ${d.metric} | ${d.baseline} | ${d.current} | ${d.delta} |`);
+        lines.push(
+          `| ${d.metric} | ${d.baseline} | ${d.current} | ${d.delta} | ${d.deltaPct} | ${d.verdict} |`
+        );
       }
-      for (const w of summary.baseline.warnings) lines.push(`- WARNING: ${w}`);
+      lines.push('');
+      lines.push(
+        '> `within-noise` and `inconclusive` are not regressions. A single noisy run is never reported as a regression.'
+      );
     }
+    for (const w of summary.baseline.warnings) lines.push(`- WARNING: ${w}`);
     lines.push('');
   }
 
@@ -323,6 +317,29 @@ function buildMarkdown(summary) {
   lines.push('- Single-user browser POC; complements JMeter, does not replace load/stress/soak testing.');
   lines.push('- A single local run is not statistically reliable performance evidence.');
   lines.push('- Browser-observed timings differ from server-side and Lighthouse lab metrics.');
+  lines.push('');
+
+  lines.push('## Troubleshooting');
+  lines.push('');
+  const failureTypes = summary.failureTypes || [];
+  if (failureTypes.length === 0) {
+    lines.push('- No failures recorded for this run.');
+  }
+  if (failureTypes.includes('functional-test-failure')) {
+    lines.push('- Functional failure: open the Playwright HTML report and JUnit XML; screenshots/traces are under reports/.');
+  }
+  if (failureTypes.includes('performance-threshold-failure')) {
+    lines.push('- Threshold breach: see the Performance thresholds section; adjust the target only with an agreed baseline.');
+  }
+  if (failureTypes.includes('lighthouse-audit-failure')) {
+    lines.push('- Lighthouse failure: check reports/lighthouse/summary.json; Chrome/network issues and auth skips are common causes.');
+  }
+  if (failureTypes.includes('lighthouse-partial-audit')) {
+    lines.push('- Lighthouse partial: some pages were skipped or failed. Results are incomplete and must not be read as a full pass.');
+  }
+  if (failureTypes.includes('missing-data')) {
+    lines.push('- Missing data: a required artifact was absent. Re-run the full pipeline so every stage produces evidence.');
+  }
   lines.push('');
   return lines.join('\n');
 }
@@ -337,7 +354,16 @@ function main() {
     const runId = resolveRunId();
     logger.info(`Generating consolidated summary for run: ${runId || '(none found)'}`);
 
-    const playwrightReport = readJsonIfExists(config.paths.playwright.json);
+    const startedAtRaw =
+      process.env.RUN_STARTED_AT || readTextIfExists(config.paths.runStartedMarker);
+    const runStartedAt = startedAtRaw ? Date.parse(startedAtRaw) : NaN;
+    const playwrightReportRaw = readJsonIfExists(config.paths.playwright.json);
+    const playwrightStale = isStaleArtifact(
+      playwrightReportRaw && playwrightReportRaw.stats && playwrightReportRaw.stats.startTime,
+      runStartedAt,
+      'Playwright results'
+    );
+    const playwrightReport = playwrightStale ? null : playwrightReportRaw;
     const tests = { summary: { passed: 0, failed: 0, flaky: 0, skipped: 0, total: 0 }, details: [], failures: [] };
     if (playwrightReport) {
       tests.details = flattenPlaywrightSpecs(playwrightReport);
@@ -356,10 +382,25 @@ function main() {
     const metricsList = collectBrowserMetrics(runId);
     writeMergedMetrics(metricsList);
 
-    const lhSummary = readJsonIfExists(path.join(config.paths.lighthouse, 'summary.json'));
+    const lhSummaryRaw = readJsonIfExists(path.join(config.paths.lighthouse, 'summary.json'));
+    // Lighthouse's summary.json is overwritten in place, so a run that skipped the
+    // audit would otherwise reuse the previous run's file. When the run id is known
+    // and disagrees, the artifact is stale and must not count as current evidence.
+    const lighthouseRunId = lhSummaryRaw ? lhSummaryRaw.runId || null : null;
+    const lighthouseStale = !!(lhSummaryRaw && runId && lighthouseRunId && lighthouseRunId !== runId);
+    if (lighthouseStale) {
+      logger.warn(
+        `Ignoring stale Lighthouse summary: runId=${lighthouseRunId} does not match current run ${runId}.`
+      );
+    }
+    const lhSummary = lighthouseStale ? null : lhSummaryRaw;
     const lhPages = lhSummary && Array.isArray(lhSummary.pages) ? lhSummary.pages : [];
+    const lhStatus = lhSummary ? lhSummary.status || null : null;
     const lighthouse = {
-      available: !!lhSummary && lhSummary.status !== 'failed',
+      available: !!lhSummary,
+      stale: lighthouseStale,
+      status: lhStatus,
+      outcomes: (lhSummary && lhSummary.outcomes) || null,
       version: lhSummary ? lhSummary.lighthouseVersion : null,
       pages: lhPages.map((p) => ({
         name: p.name,
@@ -371,25 +412,44 @@ function main() {
           : {},
         error: p.error || null,
       })),
-      error: lhSummary && lhSummary.error ? lhSummary.error : null,
+      error: lighthouseStale
+        ? `stale artifact ignored (runId=${lighthouseRunId} != ${runId})`
+        : lhSummaryRaw && lhSummaryRaw.error
+          ? lhSummaryRaw.error
+          : null,
     };
 
     const thresholds = evaluateThresholds(metricsList);
+
+    const firstMetrics = metricsList[0];
+    const lighthouseAuditSettings =
+      (lhSummary &&
+        lhSummary.environment &&
+        lhSummary.environment.configSettings &&
+        lhSummary.environment.configSettings) ||
+      null;
 
     const summary = {
       schemaVersion: '1.0',
       generatedAt: new Date().toISOString(),
       runId,
+      runStartedAt: Number.isFinite(runStartedAt) ? new Date(runStartedAt).toISOString() : null,
+      staleArtifacts: { playwright: playwrightStale, lighthouse: lighthouseStale },
       baseUrl: config.baseUrl,
       environment: {
         nodeVersion: process.version,
         os: `${require('os').type()} ${require('os').release()}`,
         platform: process.platform,
-        browser: metricsList[0] ? metricsList[0].environment.browser : null,
-        playwright: metricsList[0]
-          ? `${metricsList[0].environment.browser} ${metricsList[0].environment.browserVersion || ''}`.trim()
-          : null,
+        browser: firstMetrics ? firstMetrics.environment.browser : null,
+        browserVersion: firstMetrics ? firstMetrics.environment.browserVersion : null,
+        viewport: firstMetrics ? firstMetrics.environment.viewport || null : null,
         lighthouseVersion: lighthouse.version,
+        lighthouseAudit: lighthouseAuditSettings
+          ? {
+              formFactor: lighthouseAuditSettings.formFactor || null,
+              throttlingMethod: lighthouseAuditSettings.throttlingMethod || null,
+            }
+          : null,
       },
       tests,
       browserMetrics: metricsList,
@@ -398,6 +458,7 @@ function main() {
       status: 'unknown',
       failureTypes: [],
       reports: {
+        dashboard: rel(config.paths.dashboard),
         playwrightHtml: rel(config.paths.playwright.html),
         playwrightJson: rel(config.paths.playwright.json),
         junitXml: rel(config.paths.junit),
@@ -409,25 +470,38 @@ function main() {
 
     summary.baseline = compareBaseline(summary);
 
-    const functionalFailed = tests.summary.failed > 0;
+    const functionalFailures = tests.summary.failed;
     const thresholdFailed = thresholds.enabled && thresholds.failures.length > 0;
-    if (functionalFailed) summary.failureTypes.push('functional-test-failure');
-    if (thresholdFailed) summary.failureTypes.push('performance-threshold-failure');
-    if (lhSummary && lhSummary.status === 'failed') summary.failureTypes.push('infrastructure/tool-failure (lighthouse)');
-
-    if (functionalFailed || thresholdFailed) summary.status = 'failed';
-    else if (summary.failureTypes.length) summary.status = 'unstable';
-    else if (!playwrightReport && !metricsList.length) summary.status = 'no-data';
-    else summary.status = 'passed';
+    const decision = gate.determineStatus({
+      functionalFailures,
+      metricsCount: metricsList.length,
+      thresholdFailed,
+      lighthousePresent: !!lhSummary,
+      lighthouseFailed: lhStatus === 'failed',
+      lighthousePartial: lhStatus === 'unstable',
+      playwrightReportPresent: !!playwrightReport,
+    });
+    summary.status = decision.status;
+    summary.failureTypes = decision.failureTypes;
+    summary.functionalFailures = functionalFailures;
+    summary.thresholdFailed = thresholdFailed;
 
     fs.mkdirSync(path.dirname(config.paths.summaryJson), { recursive: true });
     fs.writeFileSync(config.paths.summaryJson, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
     fs.writeFileSync(config.paths.summaryMarkdown, `${buildMarkdown(summary)}\n`, 'utf8');
+    htmlReport.writeDashboard(summary, config.paths.dashboard);
 
-    logger.info(`Wrote ${rel(config.paths.summaryJson)} and ${rel(config.paths.summaryMarkdown)}`);
-    logger.info(`Overall status: ${summary.status}`);
+    logger.info(
+      `Wrote ${rel(config.paths.summaryJson)}, ${rel(config.paths.summaryMarkdown)} and ${rel(
+        config.paths.dashboard
+      )}`
+    );
+    logger.info(`Overall status: ${summary.status} (${summary.failureTypes.join(', ') || 'no failures'})`);
 
-    if (functionalFailed || thresholdFailed) process.exitCode = 1;
+    // Exit code reflects only build-failing gates. Missing/partial data downgrades
+    // the report to `unstable` (surfaced in the report) but does not by itself fail
+    // the build; the Jenkins Lighthouse stage handles that separately.
+    if (summary.status === 'failed') process.exitCode = 1;
   } catch (err) {
     logger.error(`Summary generation failed: ${err && err.stack ? err.stack : err}`);
     process.exitCode = 2;

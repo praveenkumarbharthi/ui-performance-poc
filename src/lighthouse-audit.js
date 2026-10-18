@@ -142,6 +142,20 @@ async function auditPage(lighthouse, port, pageDef, keepStorage) {
       authenticated: !!pageDef.requiresAuth,
       status: 'ok',
       fetchTime: lhr.fetchTime || null,
+      environment: {
+        hostUserAgent: (lhr.environment && lhr.environment.hostUserAgent) || null,
+        networkUserAgent: (lhr.environment && lhr.environment.networkUserAgent) || null,
+        benchmarkIndex:
+          lhr.environment && typeof lhr.environment.benchmarkIndex === 'number'
+            ? lhr.environment.benchmarkIndex
+            : null,
+        configSettings: {
+          formFactor: (lhr.configSettings && lhr.configSettings.formFactor) || null,
+          throttlingMethod: (lhr.configSettings && lhr.configSettings.throttlingMethod) || null,
+          onlyCategories: (lhr.configSettings && lhr.configSettings.onlyCategories) || null,
+          screenEmulation: (lhr.configSettings && lhr.configSettings.screenEmulation) || null,
+        },
+      },
       categories,
       metrics: {
         firstContentfulPaint: pickAudit(audits, 'first-contentful-paint'),
@@ -162,15 +176,18 @@ async function auditPage(lighthouse, port, pageDef, keepStorage) {
   };
 }
 
-function failedPageResult(pageDef, error) {
+// A page that was never audited is recorded explicitly (as `failed` or
+// `skipped`) so a partial run can never be mistaken for a complete one.
+function failedPageResult(pageDef, error, status = 'failed') {
   return {
     name: pageDef.name,
     lighthouseVersion: null,
     requestedUrl: pageUrl(pageDef),
     finalUrl: null,
     authenticated: !!pageDef.requiresAuth,
-    status: 'failed',
+    status,
     fetchTime: null,
+    environment: null,
     categories: {},
     metrics: {},
     reports: { html: null, json: null },
@@ -188,8 +205,14 @@ async function run() {
   let chrome = null;
   let lighthouseVersion = null;
   let sessionCookies = null;
-  let anyFailure = false;
+  let abortError = null;
   const pageResults = [];
+  const completed = new Set();
+
+  const record = (result) => {
+    pageResults.push(result);
+    completed.add(result.name);
+  };
 
   try {
     logger.info(
@@ -228,8 +251,7 @@ async function run() {
 
     for (const pageDef of pages) {
       if (pageDef.requiresAuth && !sessionCookies) {
-        anyFailure = true;
-        pageResults.push(failedPageResult(pageDef, 'skipped: no session cookie (login failed)'));
+        record(failedPageResult(pageDef, 'skipped: no session cookie (login failed)', 'skipped'));
         logger.error(`Page "${pageDef.name}" skipped: no session cookie.`);
         continue;
       }
@@ -246,22 +268,21 @@ async function run() {
         fs.writeFileSync(path.join(outDir, `${pageDef.name}.report.json`), jsonReport, 'utf8');
 
         lighthouseVersion = lighthouseVersion || result.lighthouseVersion;
-        pageResults.push(result);
+        record(result);
 
         const scores = Object.entries(result.categories)
           .map(([k, v]) => `${k}=${v.score}`)
           .join(', ');
         logger.info(`  "${pageDef.name}" ok: ${scores}`);
       } catch (err) {
-        anyFailure = true;
         const message = err && err.message ? err.message : String(err);
-        pageResults.push(failedPageResult(pageDef, message));
+        record(failedPageResult(pageDef, message));
         logger.error(`  "${pageDef.name}" failed: ${message}`);
       }
     }
   } catch (err) {
-    anyFailure = true;
-    logger.error(`Lighthouse audit aborted: ${err && err.message ? err.message : String(err)}`);
+    abortError = err && err.message ? err.message : String(err);
+    logger.error(`Lighthouse audit aborted: ${abortError}`);
   } finally {
     if (chrome) {
       try {
@@ -273,6 +294,20 @@ async function run() {
     }
   }
 
+  // Outcome is derived from what actually happened per page, never assumed. A
+  // skipped page is partial success (`unstable`), not a silent pass.
+  const outcomes = {
+    total: pages.length,
+    ok: pageResults.filter((r) => r.status === 'ok').length,
+    failed: pageResults.filter((r) => r.status === 'failed').length,
+    skipped: pageResults.filter((r) => r.status === 'skipped').length,
+  };
+  const missing = pages.length - pageResults.length;
+
+  let status = 'ok';
+  if (abortError || outcomes.failed > 0 || missing > 0) status = 'failed';
+  else if (outcomes.skipped > 0) status = 'unstable';
+
   // Always write a summary that records the real outcome instead of fake scores.
   const summary = {
     schemaVersion: '2.0',
@@ -280,7 +315,9 @@ async function run() {
     lighthouseVersion,
     runId: config.runId,
     timestamp: new Date().toISOString(),
-    status: anyFailure ? 'failed' : 'ok',
+    status,
+    outcomes,
+    abortError,
     environment: {
       nodeVersion: process.version,
       platform: os.platform(),
@@ -304,9 +341,18 @@ async function run() {
     return;
   }
 
-  if (anyFailure) {
-    logger.error('One or more Lighthouse page audits failed. See reports/lighthouse/summary.json.');
+  if (status === 'failed') {
+    logger.error(
+      `Lighthouse audit failed (ok=${outcomes.ok}, failed=${outcomes.failed}, ` +
+        `skipped=${outcomes.skipped}${abortError ? `, aborted: ${abortError}` : ''}). ` +
+        'See reports/lighthouse/summary.json.'
+    );
     process.exitCode = 1;
+  } else if (status === 'unstable') {
+    logger.warn(
+      `Lighthouse audit partially completed (ok=${outcomes.ok}, skipped=${outcomes.skipped}). ` +
+        'Results are incomplete; see reports/lighthouse/summary.json.'
+    );
   } else {
     logger.info('Lighthouse audit completed successfully.');
   }

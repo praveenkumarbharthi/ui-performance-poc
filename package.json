@@ -8,12 +8,15 @@
     "node": ">=22.19.0"
   },
   "scripts": {
+    "check:env": "node scripts/check-env.js",
     "test:ui": "playwright test",
     "test:ui:headed": "playwright test --headed",
     "test:ui:debug": "playwright test --debug",
+    "test:unit": "node --test \"tests/unit/**/*.test.js\"",
     "lighthouse": "node src/lighthouse-audit.js",
     "report": "node src/report-summary.js",
     "validate:reports": "node scripts/validate-reports.js",
+    "baseline:save": "node scripts/save-baseline.js",
     "all": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-all.ps1",
     "clean": "node -e \"require('fs').rmSync('reports/raw',{recursive:true,force:true});console.log('Cleaned reports/raw')\""
   },

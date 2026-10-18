@@ -59,12 +59,17 @@ Highlight the passing journey and that a **trace + screenshot** would be attache
 npm run report
 ```
 
-Open `reports/SUMMARY.md`, then `reports/summary.json`. Walk through:
+Open `reports/dashboard.html` (the consolidated view), then `reports/SUMMARY.md` and
+`reports/summary.json`. Walk through:
 
+- **Overall status** — `passed` / `failed` / `unstable` / `no-data`, with the contributing failure
+  types listed (`functional-test-failure`, `performance-threshold-failure`, `lighthouse-audit-failure`,
+  `lighthouse-partial-audit`, `missing-data`).
 - **FCP / LCP** — when the user first sees content / the main content.
 - **CLS** — visual stability.
 - **Navigation Timing** — DNS/TCP/TLS, DOM ready, load, and the approximate TTFB.
 - **Interaction timings** — login-to-inventory-ready, add-to-cart-to-badge, checkout-to-confirmation.
+- **Thresholds** — observation-only unless enabled; a disabled threshold can never fail the build.
 
 Say clearly:
 
@@ -96,9 +101,14 @@ Say clearly:
 
 Open the `Jenkinsfile`. Point out:
 
-- `npm ci` → Playwright Chromium → UI journey → Lighthouse → report → validate.
-- **JUnit** results feed the Jenkins test trend; HTML/JSON/Markdown artifacts are archived.
-- A Lighthouse failure marks the build **unstable**, a journey failure **fails** the build.
+- `check-env` → `npm ci` → unit tests → Playwright Chromium → UI journey → Lighthouse → report →
+  validate.
+- **JUnit** results feed the Jenkins test trend; HTML/JSON/Markdown artifacts (including
+  `dashboard.html`) are archived even when a stage fails.
+- Quality gates map to build state: a journey failure or an enforced threshold breach **fails** the
+  build; a non-critical Lighthouse failure or partial audit marks it **unstable**; missing evidence
+  can never read as a pass.
+- Stale artifacts from a previous run are rejected via the run-start marker.
 - No secrets, no hard-coded paths.
 
 ---
@@ -125,7 +135,11 @@ End with the ask: a non-production environment and a JMeter correlation exercise
 
 | When | Command | Open |
 | --- | --- | --- |
+| Environment check | `npm run check:env` | console output |
+| Unit tests | `npm run test:unit` | console output |
 | Journey | `npm run test:ui` | `reports/playwright/html/index.html` |
-| Metrics | `npm run report` | `reports/SUMMARY.md`, `reports/summary.json` |
+| Metrics | `npm run report` | `reports/dashboard.html`, `reports/SUMMARY.md`, `reports/summary.json` |
 | Lighthouse | `npm run lighthouse` | `reports/lighthouse/<page>.report.html`, `reports/lighthouse/summary.json` |
+| Save baseline | `npm run baseline:save` | `reports/baseline/baseline.json` |
+| Validate artifacts | `npm run validate:reports` | console output |
 | Everything | `npm run all` | all of the above |

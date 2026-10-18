@@ -6,6 +6,8 @@ const config = require('./src/config');
 
 module.exports = defineConfig({
   testDir: './tests',
+  // Only Playwright specs; node:test unit files live under tests/unit/*.test.js.
+  testMatch: '**/*.spec.js',
   timeout: 120_000,
   expect: { timeout: 15_000 },
 

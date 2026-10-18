@@ -53,12 +53,34 @@ its visible outcome:
 | Metric | Measures |
 | --- | --- |
 | `goto-login-page` | Full page navigation to the login page (`goto` → `load`). |
-| `login-to-inventory-ready` | Click **Login** → inventory container visible. |
+| `login-to-inventory-ready` | Click **Login** → first inventory item visible. |
 | `add-to-cart-to-badge-updated` | Click **Add to cart** → cart badge shows `1`. |
-| `open-cart-to-item-verified` | Open cart → item + quantity verified. |
-| `checkout-form-to-overview` | Open checkout → fill details → **Continue** → overview. |
+| `open-cart-to-item-verified` | Open cart → item name + quantity verified. |
+| `open-checkout-form` | Click **Checkout** → checkout form (First name) visible. |
+| `checkout-form-to-overview` | Click **Continue** → order overview shows the item. |
 | `checkout-submit-to-confirmation-visible` | Click **Finish** → confirmation header visible. |
-| `total-journey-duration` | Whole journey wall-clock duration. |
+| `total-journey-duration` | Whole journey wall-clock duration (separate from page navigations and interactions). |
+
+Captured values are also written alongside the timings for traceability: `overview-item-price` and
+`overview-subtotal` are **text values**, not durations, and are excluded from the timings table.
+
+Each journey checkpoint (login, inventory, cart, checkout form, checkout overview, confirmation) also
+records a per-page snapshot. The top-level metric fields mirror the **primary page** (`login`), which
+is the only page sampled after the `LCP_OBSERVATION_MS` settle window.
+
+**SauceDemo is a single-page app (React).** Only the initial load creates a new *document*; every
+later checkpoint is a **client-side route change**. Each snapshot therefore carries the document's
+identity (`documentTimeOrigin`), and the reporter sets `sameDocument: true` for the checkpoints that
+share the initial document. For those checkpoints:
+
+- `navigation` (Navigation Timing) and `firstContentfulPaintMs` are reported as `null` — there was no
+  new document load, so a document-level navigation/FCP value would be a duplicated, misleading
+  number. Their real per-step cost is in the **interaction timings**.
+- `largestContentfulPaintMs` / `cumulativeLayoutShift` are kept but are **cumulative for the session**
+  (the observers keep running across route changes), so equal values across checkpoints are expected.
+
+Against a genuine multi-page target each route loads its own document, all snapshots get distinct
+`documentTimeOrigin` values, and no checkpoint is marked `sameDocument`.
 
 > **These are NOT INP.** INP (Interaction to Next Paint) is a specific Core Web Vital that requires
 > the official `web-vitals` implementation and correct measurement of the *worst* interaction

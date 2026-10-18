@@ -1,4 +1,12 @@
 // Declarative pipeline for a WINDOWS Jenkins agent (bat steps).
+//
+// Reliability rules:
+//  - Evidence is always published: the UI journey, report aggregation and report
+//    validation use catchError so a failure does not skip later stages or the
+//    post-always JUnit/archive steps.
+//  - Quality gates reflect the result: functional failures and enforced threshold
+//    breaches set the build to FAILURE; a non-critical Lighthouse failure sets it
+//    to UNSTABLE instead of silently passing.
 pipeline {
   agent { label 'windows' }
 
@@ -25,10 +33,22 @@ pipeline {
       }
     }
 
+    stage('Mark run start') {
+      steps {
+        // Written to a file so report aggregation can reject stale artifacts even
+        // though it runs in a separate process.
+        bat 'if not exist reports mkdir reports'
+        bat 'powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString(\'yyyy-MM-ddTHH:mm:ss.fffZ\') | Set-Content -NoNewline reports\\run-started-at.txt"'
+        bat 'type reports\\run-started-at.txt'
+      }
+    }
+
     stage('Tool checks') {
       steps {
         bat 'node -v'
         bat 'npm -v'
+        // Fails the stage if the Node/npm toolchain does not meet requirements.
+        bat 'node scripts/check-env.js --tools-only'
         // Chrome is optional: chrome-launcher auto-detects it, else bundled Chromium is used.
         bat 'if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" (echo Chrome: found) else (echo Chrome: NOT found - Lighthouse will rely on bundled Chromium)'
       }
@@ -37,6 +57,22 @@ pipeline {
     stage('Install dependencies') {
       steps {
         bat 'if exist package-lock.json (call npm ci) else (call npm install)'
+      }
+    }
+
+    stage('Environment validation') {
+      steps {
+        bat 'call npm run check:env'
+      }
+    }
+
+    stage('Unit tests') {
+      steps {
+        // Fails the build on a broken calculation/report rule but keeps going so
+        // later stages (and post-always publishing) still run.
+        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+          bat 'call npm run test:unit'
+        }
       }
     }
 
@@ -55,7 +91,10 @@ pipeline {
 
     stage('UI journey (Playwright)') {
       steps {
-        bat 'call npm run test:ui'
+        // A functional failure fails the build but must not skip report publishing.
+        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+          bat 'call npm run test:ui'
+        }
       }
     }
 
@@ -75,33 +114,39 @@ pipeline {
 
     stage('Report aggregation') {
       steps {
-        bat 'call npm run report'
+        // Exits non-zero on a functional or enforced threshold failure.
+        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+          bat 'call npm run report'
+        }
       }
     }
 
     stage('Validate reports') {
       steps {
-        bat 'call npm run validate:reports'
+        catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+          bat 'call npm run validate:reports'
+        }
       }
     }
   }
 
   post {
     always {
+      // Publish results even when an earlier stage failed.
       junit allowEmptyResults: true, testResults: 'reports/junit/*.xml'
 
       archiveArtifacts allowEmptyArchive: true, artifacts: 'reports/**/*.html, reports/**/*.json, reports/**/*.md, reports/**/*.xml, reports/**/*.png, reports/**/*.zip', fingerprints: false
 
-      echo 'Reports archived under reports/ (HTML, JSON, Markdown, JUnit XML, screenshots, traces).'
+      echo 'Reports archived under reports/ (dashboard.html, HTML, JSON, Markdown, JUnit XML, screenshots, traces).'
     }
     success {
       echo 'Build succeeded: UI journey passed and reports were generated.'
     }
     unstable {
-      echo 'Build unstable: a non-critical stage (e.g. Lighthouse) failed. Review archived reports.'
+      echo 'Build unstable: a non-critical stage (e.g. Lighthouse) failed or results are incomplete. Review archived reports.'
     }
     failure {
-      echo 'Build failed: inspect the UI journey, report generation, or validation stage logs.'
+      echo 'Build failed: inspect the UI journey, threshold breaches, report generation, or validation stage logs.'
     }
     cleanup {
       // Remove bulky transient Playwright output; keep reports/ evidence intact.

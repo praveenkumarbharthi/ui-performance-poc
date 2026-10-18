@@ -75,9 +75,10 @@ async function measureInteraction(timings, key, fn) {
 }
 
 // Reads the page-load snapshot from the CURRENT page. Call after an explicit
-// readiness point plus the documented observation window (config.metrics.
-// lcpObservationMs) so FCP/LCP/CLS have settled. Unavailable metrics are null.
-async function collectPageLoadSnapshot(page) {
+// readiness point; add the documented observation window (config.metrics.
+// lcpObservationMs) when the page must settle before reading LCP. Unavailable
+// metrics are null rather than an invented value.
+async function collectPageLoadSnapshot(page, name = 'page') {
   const raw = await page.evaluate(() => {
     const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -118,6 +119,13 @@ async function collectPageLoadSnapshot(page) {
       cumulativeLayoutShift: ui ? num(ui.cls) : null,
       clsShiftCount: ui && Array.isArray(ui.clsEntries) ? ui.clsEntries.length : null,
       lcpCandidateCount: ui && Array.isArray(ui.lcpCandidates) ? ui.lcpCandidates.length : null,
+      // Identity of the document these numbers belong to. In a single-page app the
+      // observer state and the navigation entry persist across route changes, so
+      // this is what lets the reporter tell a real page load from a client-side
+      // route change instead of duplicating one document's metrics under many
+      // page names.
+      documentTimeOrigin: num(performance.timeOrigin),
+      documentUrl: nav ? nav.name || null : null,
       observedUserAgent: navigator.userAgent,
       deviceMemoryGb: typeof navigator.deviceMemory === 'number' ? navigator.deviceMemory : null,
       hardwareConcurrency:
@@ -131,7 +139,10 @@ async function collectPageLoadSnapshot(page) {
   const browserVersion = browser ? browser.version() : null;
 
   return {
+    name,
     pageUrl: raw.pageUrl,
+    documentUrl: raw.documentUrl,
+    documentTimeOrigin: raw.documentTimeOrigin,
     navigation: raw.navigation,
     firstContentfulPaintMs: raw.firstContentfulPaintMs,
     largestContentfulPaintMs: raw.largestContentfulPaintMs,
@@ -156,9 +167,22 @@ async function collectPageLoadSnapshot(page) {
   };
 }
 
+function defaultEnvironment() {
+  return {
+    browser: null,
+    browserVersion: null,
+    os: { type: os.type(), platform: os.platform(), release: os.release(), arch: os.arch() },
+    nodeVersion: process.version,
+  };
+}
+
+// `pages` maps a checkpoint name to a collectPageLoadSnapshot() result. The
+// primary page also drives the top-level metric fields so threshold evaluation
+// and long-standing report consumers keep a single, well-defined target.
 function buildMetricsReport(options = {}) {
   const {
-    pageLoad = null,
+    pages = {},
+    primaryPage = 'login',
     runId = config.runId,
     label = 'journey',
     timings = {},
@@ -167,30 +191,60 @@ function buildMetricsReport(options = {}) {
     errors = [],
   } = options;
 
+  const names = Object.keys(pages);
+  const primaryName = pages[primaryPage] ? primaryPage : names[0] || null;
+  const primary = primaryName ? pages[primaryName] : null;
+
+  // Document-level metrics (navigation timing, FCP) are only valid for the
+  // checkpoint that actually loaded a document. SauceDemo is a single-page app,
+  // so every checkpoint after the first is a client-side route change: repeating
+  // the initial document's numbers under those names would misrepresent them as a
+  // fresh page load. LCP/CLS are kept because they keep accumulating across
+  // routes, and are labelled as cumulative.
+  const seenDocuments = new Set();
+  const pageList = names.map((name) => {
+    const snapshot = pages[name];
+    const hasIdentity =
+      snapshot.documentTimeOrigin !== null && snapshot.documentTimeOrigin !== undefined;
+    const docKey = hasIdentity ? `t:${snapshot.documentTimeOrigin}` : `n:${name}`;
+    const sameDocument = seenDocuments.has(docKey);
+    seenDocuments.add(docKey);
+    return {
+      name,
+      url: snapshot.pageUrl,
+      documentUrl: snapshot.documentUrl || null,
+      sameDocument,
+      navigation: sameDocument ? null : snapshot.navigation,
+      firstContentfulPaintMs: sameDocument ? null : snapshot.firstContentfulPaintMs,
+      largestContentfulPaintMs: snapshot.largestContentfulPaintMs,
+      cumulativeLayoutShift: snapshot.cumulativeLayoutShift,
+      clsShiftCount: snapshot.clsShiftCount,
+      lcpCandidateCount: snapshot.lcpCandidateCount,
+      note: sameDocument
+        ? 'Client-side route change in a single-page app: no new document load, so navigation timing and FCP are not applicable. LCP/CLS are cumulative for the session; see interactionTimings for this step.'
+        : null,
+    };
+  });
+
   return {
-    schemaVersion: '1.0',
+    schemaVersion: '1.1',
     runId,
     label,
     testStatus,
     timestamp: new Date().toISOString(),
     baseUrl,
-    pageUrl: pageLoad ? pageLoad.pageUrl : null,
-    environment: pageLoad
-      ? pageLoad.environment
-      : {
-          browser: null,
-          browserVersion: null,
-          os: { type: os.type(), platform: os.platform(), release: os.release(), arch: os.arch() },
-          nodeVersion: process.version,
-        },
+    primaryPage: primaryName,
+    pageUrl: primary ? primary.pageUrl : null,
+    environment: primary ? primary.environment : defaultEnvironment(),
     observation: {
       lcpObservationMs: config.metrics.lcpObservationMs,
-      // LCP is only final after user input or page hide, so the login-page read
-      // is an approximation.
+      primaryPage,
+      // LCP is only final after user input or page hide, so a snapshot taken at
+      // the readiness checkpoint is an approximation.
       lcpDescription:
-        'LCP is read on the login page after the `load` event and a documented ' +
-        'observation window. LCP is only truly final after user input or page hide, ' +
-        'so this is an approximation.',
+        'LCP is read per page at its journey checkpoint after the `load` event and, for ' +
+        `the primary page ("${primaryPage}"), a documented observation window. LCP is only ` +
+        'truly final after user input or page hide, so all values are approximations.',
       ttfbDescription:
         'TTFB is approximated as responseStart - navigationStart from Navigation Timing; ' +
         'it includes redirect time and does not isolate server processing from network latency.',
@@ -201,14 +255,20 @@ function buildMetricsReport(options = {}) {
       jmeterNote:
         'These are browser-observed, single-session timings and are not server-side or ' +
         'load-test measurements; they complement JMeter rather than replace it.',
+      documentNote:
+        'Navigation timing and FCP are document-level and are reported only for checkpoints ' +
+        'that loaded a document. When a target is a single-page app (e.g. SauceDemo), later ' +
+        'checkpoints are client-side route changes (sameDocument=true) with no new document ' +
+        'load; their per-step cost is measured by interactionTimings, not by navigation timing.',
     },
     metrics: {
-      navigation: pageLoad ? pageLoad.navigation : null,
-      firstContentfulPaintMs: pageLoad ? pageLoad.firstContentfulPaintMs : null,
-      largestContentfulPaintMs: pageLoad ? pageLoad.largestContentfulPaintMs : null,
-      cumulativeLayoutShift: pageLoad ? pageLoad.cumulativeLayoutShift : null,
-      clsShiftCount: pageLoad ? pageLoad.clsShiftCount : null,
-      lcpCandidateCount: pageLoad ? pageLoad.lcpCandidateCount : null,
+      navigation: primary ? primary.navigation : null,
+      firstContentfulPaintMs: primary ? primary.firstContentfulPaintMs : null,
+      largestContentfulPaintMs: primary ? primary.largestContentfulPaintMs : null,
+      cumulativeLayoutShift: primary ? primary.cumulativeLayoutShift : null,
+      clsShiftCount: primary ? primary.clsShiftCount : null,
+      lcpCandidateCount: primary ? primary.lcpCandidateCount : null,
+      pages: pageList,
       interactionTimings: timings,
     },
     errors,

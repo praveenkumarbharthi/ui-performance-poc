@@ -20,6 +20,11 @@ authenticated pages), producing HTML/JSON/JUnit/Markdown reports.
   machine at one moment. They are affected by CPU, memory, network, extensions and background load.
 - **Custom interaction timings** are click-to-visible wall-clock measurements. They are **not INP**.
   INP is not measured by this PoC.
+- **Single-page apps:** SauceDemo is a React SPA, so only the initial load is a real *document*
+  navigation. Later journey checkpoints are client-side route changes: their document-level
+  navigation timing and FCP are reported as `null` (marked `sameDocument`) instead of duplicating the
+  initial load's numbers, and their cost is shown as interaction timings. LCP/CLS are cumulative for
+  the session.
 - **Lighthouse** metrics come from a controlled lab audit with simulated throttling. They are **not**
   real-user monitoring and are **not** directly comparable to the journey interaction timings.
 - **Server-side** latency is out of scope here; it requires backend instrumentation and a
@@ -41,8 +46,15 @@ different questions.
 
 - Run-to-run variation is expected. Treat any single number as a **sample**, not a fact.
 - Compare runs only when browser, OS, machine class, network and throttling settings match. The
-  optional baseline comparison warns when browser / OS / Lighthouse version differ.
-- Prefer medians of several runs over a single measurement before drawing conclusions.
+  baseline comparison (`src/baseline.js`) **blocks** a comparison when browser / OS / platform /
+  viewport width differ and **warns** on viewport height, Lighthouse version or audit-setting
+  differences.
+- Small movements are not regressions: a change is only called an **improvement** or **regression**
+  when it exceeds a configurable noise band (`BASELINE_NOISE_PCT`, default 10%) and the measurement
+  is not too variable (`BASELINE_VARIABILITY_PCT`, default 20%). Otherwise it is reported as
+  `within-noise` or `inconclusive` — never a false regression from a single noisy sample.
+- Prefer medians of several runs over a single measurement before drawing conclusions. The baseline
+  stores count / median / min / max / spread so repeated runs are visible.
 
 ## Thresholds
 
@@ -71,10 +83,12 @@ and infrastructure failures.
 
 ## Next steps (suggested roadmap)
 
-1. Add a small number of repeated runs and report medians / spread.
+1. Automate **repeated runs** in CI (e.g. N times, then compare medians) — the baseline module
+   already records count / median / spread once multiple samples are saved.
 2. Introduce RUM on a non-production front end for real-user comparison.
 3. Parameterise the journey (multiple products / flows) while staying single-user.
-4. Add accessibility checks to CI where relevant.
+4. Turn the Lighthouse **Accessibility** category score into an enforced CI gate (it is currently
+   reported, not gated).
 5. Publish trends (historical summary JSON) rather than point-in-time results.
 
 ## Explicit honesty statement

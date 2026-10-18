@@ -93,6 +93,48 @@ function checkLighthouse(label, dir, { optional = false } = {}) {
   return { ...base, reason: `valid-json (${ok.length}/${pages.length} pages, reports present)` };
 }
 
+// Validates the consolidated summary's structure, status vocabulary, and that
+// every configured Lighthouse page is accounted for. This checks report *validity*
+// only; it deliberately does not assert test/audit success (that is the summary's
+// job, so the two concerns stay separate).
+function checkConsolidatedSummary(label, file) {
+  const base = checkJson(label, file);
+  if (!base.ok) return base;
+
+  let summary;
+  try {
+    summary = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    return { ...base, ok: false, reason: `invalid-json: ${err.message}` };
+  }
+
+  const problems = [];
+  for (const key of ['schemaVersion', 'status', 'tests', 'thresholds', 'lighthouse', 'browserMetrics', 'failureTypes']) {
+    if (summary[key] === undefined) problems.push(`missing key "${key}"`);
+  }
+  const validStatus = ['passed', 'failed', 'unstable', 'no-data'];
+  if (summary.status && !validStatus.includes(summary.status)) {
+    problems.push(`invalid status "${summary.status}"`);
+  }
+
+  const expectedPages = config.lighthouse.pages.map((p) => p.name);
+  const reported = new Set(
+    summary.lighthouse && Array.isArray(summary.lighthouse.pages)
+      ? summary.lighthouse.pages.map((p) => p.name)
+      : []
+  );
+  if (summary.lighthouse && summary.lighthouse.available) {
+    for (const name of expectedPages) {
+      if (!reported.has(name)) problems.push(`configured Lighthouse page "${name}" not reported`);
+    }
+  }
+
+  if (problems.length > 0) {
+    return { ...base, ok: false, reason: `summary issues: ${problems.join('; ')}` };
+  }
+  return { ...base, reason: `valid-json (status=${summary.status})` };
+}
+
 function main() {
   const p = config.paths;
   const checks = [
@@ -101,8 +143,9 @@ function main() {
     checkXml('JUnit XML report', p.junit),
     checkJson('Merged browser metrics JSON', p.browserMetrics),
     checkLighthouse('Lighthouse page audit', p.lighthouse, { optional: true }),
-    checkJson('Consolidated summary JSON', p.summaryJson),
+    checkConsolidatedSummary('Consolidated summary JSON', p.summaryJson),
     checkFile('Markdown summary', p.summaryMarkdown),
+    checkHtml('Run dashboard HTML', p.dashboard),
   ];
 
   let failures = 0;

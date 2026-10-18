@@ -3,7 +3,17 @@ $ErrorActionPreference = 'Continue'
 if (-not $env:RUN_ID -or $env:RUN_ID.Trim() -eq '') {
     $env:RUN_ID = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH-mm-ss-fff')
 }
+if (-not $env:RUN_STARTED_AT -or $env:RUN_STARTED_AT.Trim() -eq '') {
+    $env:RUN_STARTED_AT = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+}
 Write-Host "Run ID: $env:RUN_ID"
+Write-Host "Run started at: $env:RUN_STARTED_AT"
+
+# Persist the start time so report aggregation can reject stale artifacts even
+# when it runs in a separate process without the environment variable.
+$reportsDir = Join-Path $PSScriptRoot '..\reports'
+New-Item -ItemType Directory -Force -Path $reportsDir | Out-Null
+Set-Content -Path (Join-Path $reportsDir 'run-started-at.txt') -Value $env:RUN_STARTED_AT -NoNewline
 
 $results = [ordered]@{}
 

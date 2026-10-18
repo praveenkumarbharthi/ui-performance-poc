@@ -43,7 +43,11 @@ const runIdFromEnv = !!(process.env.RUN_ID && process.env.RUN_ID.trim());
 const runId = runIdFromEnv ? process.env.RUN_ID.trim() : new Date().toISOString().replace(/[:.]/g, '-');
 process.env.RUN_ID = runId;
 
-const reportsDir = path.join(ROOT, 'reports');
+// Reports root is overridable so tests and CI can target an isolated directory
+// instead of the machine-specific default.
+const reportsDir = process.env.REPORTS_DIR
+  ? path.resolve(process.env.REPORTS_DIR)
+  : path.join(ROOT, 'reports');
 
 const config = {
   runId,
@@ -71,6 +75,8 @@ const config = {
     lighthouse: path.join(reportsDir, 'lighthouse'),
     summaryJson: path.join(reportsDir, 'summary.json'),
     summaryMarkdown: path.join(reportsDir, 'SUMMARY.md'),
+    dashboard: path.join(reportsDir, 'dashboard.html'),
+    runStartedMarker: path.join(reportsDir, 'run-started-at.txt'),
   },
 
   metrics: {
@@ -112,6 +118,10 @@ const config = {
   // Only honoured when the baseline file exists and is comparable.
   baseline: {
     file: process.env.BASELINE_FILE || path.join(reportsDir, 'baseline', 'summary.json'),
+    // A change below noisePct is `within-noise`; a current run whose spread exceeds
+    // variabilityPct is `inconclusive`. Both prevent false regression claims.
+    noisePct: envNum(process.env.BASELINE_NOISE_PCT, 10),
+    variabilityPct: envNum(process.env.BASELINE_VARIABILITY_PCT, 20),
   },
 
   logLevel: (process.env.LOG_LEVEL || 'info').toLowerCase(),

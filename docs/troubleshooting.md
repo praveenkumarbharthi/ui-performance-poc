@@ -22,10 +22,12 @@ Do not lower the policy machine-wide unless your IT policy allows it.
 
 ## Node.js / npm not found
 
-**Symptom:** `node -v` or `npm -v` is not recognised.
+**Symptom:** `node -v` or `npm -v` is not recognised, or `npm run check:env` reports the Node version
+is too old.
 
-**Fix:** install Node.js **LTS (>=18.18)** from <https://nodejs.org> and reopen the terminal so PATH
-refreshes. Verify with `node -v` and `npm -v`.
+**Fix:** install **Node.js >= 22.19.0** (required by Lighthouse 13, see `engines.node` in
+`package.json`) from <https://nodejs.org> and reopen the terminal so PATH refreshes. Verify with
+`node -v`, `npm -v` and `npm run check:env`.
 
 ## Playwright browser missing
 
@@ -114,11 +116,19 @@ $env:STRICT = "1"; npm run all
 
 Check `reports/lighthouse/summary.json` — it records the exact error instead of fabricating scores.
 
-## Reports look stale
+## Reports look stale or show `no-data`
 
-Each run writes raw artifacts to `reports/raw/<runId>/`. The *latest* convenient files
-(`reports/summary.json`, `reports/SUMMARY.md`) are overwritten by design. To keep runs isolated,
-set an explicit `RUN_ID`:
+Each run writes raw artifacts to `reports/raw/<runId>/`, and the *latest* convenient files
+(`reports/summary.json`, `reports/SUMMARY.md`, `reports/dashboard.html`,
+`reports/browser-metrics/browser-metrics.json`) are overwritten by design. Report aggregation
+compares artifact timestamps and Lighthouse `runId` against the run-start marker
+(`reports/run-started-at.txt`, exported as `RUN_STARTED_AT`) and flags anything older as **stale**
+rather than counting it. `summary.staleArtifacts` lists what was excluded.
+
+If you see `status: no-data`, the run produced no readable evidence at all (no Playwright report, no
+browser metrics, no Lighthouse summary). Check that the journey and Lighthouse stages actually ran.
+
+To keep runs isolated, set an explicit `RUN_ID`:
 
 ```powershell
 $env:RUN_ID = "release-2026-10-17"; npm run all
