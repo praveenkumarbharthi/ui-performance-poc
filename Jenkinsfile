@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
 // Jenkinsfile - declarative pipeline for a WINDOWS Jenkins agent (bat steps).
 //
-// Stages: checkout -> tool checks -> npm ci -> Playwright Chromium -> UI journey
-//         -> Lighthouse -> report aggregation -> validation -> publish.
+// Stages: checkout -> tool checks -> npm ci -> dependency audit -> Playwright
+//         Chromium -> UI journey -> Lighthouse -> report aggregation
+//         -> validation -> publish.
 //
 // Design rules:
 //   - No hard-coded Jenkins workspace or machine-specific tool paths.
@@ -52,6 +53,14 @@ pipeline {
       steps {
         // Use the lock file when present for reproducible installs.
         bat 'if exist package-lock.json (call npm ci) else (call npm install)'
+      }
+    }
+
+    stage('Dependency security audit') {
+      steps {
+        // Fail the build on HIGH or CRITICAL advisories; moderate/low are
+        // reported but do not break the build. Exit code is non-zero on HIGH+.
+        bat 'call npm audit --audit-level=high'
       }
     }
 

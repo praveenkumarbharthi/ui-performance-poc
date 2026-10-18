@@ -5,7 +5,7 @@
   "description": "Proof of concept: browser-level UI performance testing with Playwright + Lighthouse, complementary to JMeter.",
   "license": "MIT",
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
     "test:ui": "playwright test",
@@ -18,8 +18,8 @@
     "clean": "node -e \"require('fs').rmSync('reports/raw',{recursive:true,force:true});console.log('Cleaned reports/raw')\""
   },
   "dependencies": {
-    "chrome-launcher": "^1.1.2",
-    "lighthouse": "^12.2.1"
+    "chrome-launcher": "^1.2.1",
+    "lighthouse": "^13.5.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.2"
