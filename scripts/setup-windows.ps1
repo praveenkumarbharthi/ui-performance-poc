@@ -1,43 +1,28 @@
-# -----------------------------------------------------------------------------
-# setup-windows.ps1
-# Verifies prerequisites and installs project dependencies + Playwright Chromium.
-# Works from a directory path containing spaces. Uses only cross-platform npm
-# commands plus version checks for Node.js, npm and Google Chrome.
-#
-# Usage (from the project root):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-windows.ps1
-# -----------------------------------------------------------------------------
+# Verifies prerequisites then installs dependencies + Playwright Chromium.
+# Usage: powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-windows.ps1
 
 $ErrorActionPreference = 'Continue'
 
-Write-Host '============================================='
-Write-Host ' ui-performance-poc - Windows setup'
-Write-Host '============================================='
+Write-Host 'ui-performance-poc - Windows setup'
 
 function Test-Command($name) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    return [bool]$cmd
+    return [bool](Get-Command $name -ErrorAction SilentlyContinue)
 }
 
-# --- Node.js -----------------------------------------------------------------
 if (Test-Command 'node') {
-    $nodeVersion = (node -v)
-    Write-Host "[OK]  Node.js $nodeVersion"
+    Write-Host "[OK]  Node.js $(node -v)"
 } else {
-    Write-Error '[FAIL] Node.js not found on PATH. Install Node.js LTS (>=18.18).'
+    Write-Error '[FAIL] Node.js not found on PATH. Install Node.js >= 22.19 (required by Lighthouse 13).'
     exit 1
 }
 
-# --- npm ---------------------------------------------------------------------
 if (Test-Command 'npm') {
-    $npmVersion = (npm -v)
-    Write-Host "[OK]  npm $npmVersion"
+    Write-Host "[OK]  npm $(npm -v)"
 } else {
     Write-Error '[FAIL] npm not found on PATH.'
     exit 1
 }
 
-# --- Google Chrome (needed by Lighthouse) -----------------------------------
 $chromeCandidates = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
@@ -55,7 +40,6 @@ if ($chromeFound) {
     Write-Warning '       Set CHROME_PATH if Chrome is installed elsewhere.'
 }
 
-# --- Install dependencies ----------------------------------------------------
 if (Test-Path 'package-lock.json') {
     Write-Host '[INFO] package-lock.json found -> running npm ci'
     npm ci
@@ -69,7 +53,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host '[OK]  Dependencies installed.'
 
-# --- Playwright Chromium -----------------------------------------------------
 Write-Host '[INFO] Installing Playwright Chromium browser...'
 npx playwright install chromium
 if ($LASTEXITCODE -ne 0) {

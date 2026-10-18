@@ -1,26 +1,5 @@
 'use strict';
 
-/**
- * SauceDemo single-user UI journey with browser performance metrics.
- *
- * This is a functional UI journey (not a load test). It exercises the
- * documented public demo account only and never generates concurrent load.
- *
- * Journey steps:
- *   1.  Open login page and record navigation/browser timings.
- *   2.  Verify the login form is visible.
- *   3.  Sign in with the public demo credentials.
- *   4.  Verify the inventory page loads.
- *   5.  Record login-action -> inventory-ready duration.
- *   6.  Add "Sauce Labs Backpack" to cart and verify the cart badge.
- *   7.  Open the cart and verify product + quantity.
- *   8.  Checkout, fill customer details, continue.
- *   9.  Verify order overview (product/price where stable).
- *   10. Finish checkout and assert confirmation message is visible.
- *   11. Record per-interaction durations and the overall journey duration.
- *   12. Screenshot + trace are captured automatically on failure (config).
- */
-
 const { test, expect } = require('@playwright/test');
 const config = require('../src/config');
 const logger = require('../src/logger');
@@ -31,7 +10,6 @@ const PRODUCT_SLUG = 'sauce-labs-backpack';
 
 test.describe('SauceDemo UI performance journey', () => {
   test('single-user purchase journey with browser metrics', async ({ page }, testInfo) => {
-    // Register performance observers BEFORE any navigation.
     await bm.attachMetricsCollector(page);
 
     const timings = {};
@@ -41,88 +19,75 @@ test.describe('SauceDemo UI performance journey', () => {
     let pageLoadSnapshot = null;
 
     try {
-      // 1. Open the login page and record navigation timing.
       await bm.measureInteraction(timings, 'goto-login-page', async () => {
         const response = await page.goto('/', { waitUntil: 'load' });
         expect(response, 'login page navigation should return a response').toBeTruthy();
         expect(response.ok(), `login page HTTP status ${response && response.status()}`).toBeTruthy();
       });
 
-      // 2. Verify the login form is visible.
-      await expect(page.locator('#user-name')).toBeVisible();
-      await expect(page.locator('#password')).toBeVisible();
-      await expect(page.locator('#login-button')).toBeVisible();
+      await expect(page.getByTestId('username')).toBeVisible();
+      await expect(page.getByTestId('password')).toBeVisible();
+      await expect(page.getByTestId('login-button')).toBeVisible();
 
-      // Documented observation window so FCP/LCP/CLS can settle before reading.
-      // The login page is the "page readiness point" for the page-load metrics.
+      // LCP is only final after user input or page hide, so the login page is
+      // sampled after a documented settle window before the snapshot is read.
       await page.waitForTimeout(config.metrics.lcpObservationMs);
       pageLoadSnapshot = await bm.collectPageLoadSnapshot(page);
 
-      // 3. Sign in and 4/5. measure login -> inventory ready.
-      await page.fill('#user-name', config.credentials.username);
-      await page.fill('#password', config.credentials.password);
+      await page.getByTestId('username').fill(config.credentials.username);
+      await page.getByTestId('password').fill(config.credentials.password);
 
       await bm.measureInteraction(timings, 'login-to-inventory-ready', async () => {
-        await page.click('#login-button');
-        await page.waitForSelector('#inventory_container', { state: 'visible' });
-        await expect(page.locator('.inventory_item').first()).toBeVisible();
+        await page.getByTestId('login-button').click();
+        await expect(page.getByTestId('inventory-item').first()).toBeVisible();
       });
-      expect(page.url()).toContain('/inventory.html');
+      await expect(page).toHaveURL(/\/inventory\.html/);
 
-      // 6. Add a product by stable data-test locator and verify the badge.
       await bm.measureInteraction(timings, 'add-to-cart-to-badge-updated', async () => {
-        await page.click(`[data-test="add-to-cart-${PRODUCT_SLUG}"]`);
-        await expect(page.locator('.shopping_cart_badge')).toHaveText('1');
+        await page.getByTestId(`add-to-cart-${PRODUCT_SLUG}`).click();
+        await expect(page.getByTestId('shopping-cart-badge')).toHaveText('1');
       });
 
-      // 7. Open the cart and verify product + quantity.
       await bm.measureInteraction(timings, 'open-cart-to-item-verified', async () => {
-        await page.click('.shopping_cart_link');
+        await page.getByTestId('shopping-cart-link').click();
         await expect(page.locator('.cart_item')).toHaveCount(1);
-        await expect(page.locator('.cart_item .inventory_item_name')).toHaveText(PRODUCT_NAME);
-        await expect(page.locator('.cart_item .cart_quantity')).toHaveText('1');
+        await expect(page.getByTestId('inventory-item-name')).toHaveText(PRODUCT_NAME);
+        await expect(page.getByTestId('item-quantity')).toHaveText('1');
       });
 
-      // 8. Proceed to checkout, fill test customer details, continue.
       await bm.measureInteraction(timings, 'checkout-form-to-overview', async () => {
-        await page.click('[data-test="checkout"]');
-        await expect(page.locator('[data-test="firstName"]')).toBeVisible();
-        await page.fill('[data-test="firstName"]', 'Perf');
-        await page.fill('[data-test="lastName"]', 'Tester');
-        await page.fill('[data-test="postalCode"]', '560001');
-        await page.click('[data-test="continue"]');
+        await page.getByTestId('checkout').click();
+        await expect(page.getByTestId('firstName')).toBeVisible();
+        await page.getByTestId('firstName').fill('Perf');
+        await page.getByTestId('lastName').fill('Tester');
+        await page.getByTestId('postalCode').fill('560001');
+        await page.getByTestId('continue').click();
       });
 
-      // 9. Verify the order overview (product/price where stable).
       await expect(page.locator('.cart_item')).toHaveCount(1);
-      await expect(page.locator('.cart_item .inventory_item_name')).toHaveText(PRODUCT_NAME);
-      const itemPrice = await page.locator('.cart_item .inventory_item_price').first().textContent();
+      await expect(page.getByTestId('inventory-item-name')).toHaveText(PRODUCT_NAME);
+      const itemPrice = await page.getByTestId('inventory-item-price').first().textContent();
       timings['overview-item-price'] = itemPrice ? itemPrice.trim() : null;
-      const subtotal = await page.locator('[data-test="subtotal-label"]').textContent();
+      const subtotal = await page.getByTestId('subtotal-label').textContent();
       timings['overview-subtotal'] = subtotal ? subtotal.trim() : null;
 
-      // 10. Finish checkout and assert confirmation is visible.
       await bm.measureInteraction(timings, 'checkout-submit-to-confirmation-visible', async () => {
-        await page.click('[data-test="finish"]');
-        await expect(page.locator('[data-test="complete-header"]')).toBeVisible();
+        await page.getByTestId('finish').click();
+        await expect(page.getByTestId('complete-header')).toBeVisible();
       });
-      await expect(page.locator('[data-test="complete-header"]')).toHaveText(
-        /thank you for your order/i
-      );
+      await expect(page.getByTestId('complete-header')).toHaveText(/thank you for your order/i);
     } catch (err) {
       testStatus = 'failed';
-      errors.push(err && err.message ? err.message : String(err));
-      logger.error(`Journey failed: ${err && err.message ? err.message : String(err)}`);
+      const message = err && err.message ? err.message : String(err);
+      errors.push(message);
+      logger.error(`Journey failed: ${message}`);
       throw err;
     } finally {
       timings['total-journey-duration'] = Date.now() - journeyStart;
 
-      // Always collect + persist metrics, even on failure, so the run leaves
-      // usable evidence. Guard against the page being closed mid-collection.
+      // Persist metrics even on failure so the run still leaves usable evidence.
       try {
         if (!pageLoadSnapshot) {
-          // Failure happened before the login-page snapshot was taken; do a
-          // best-effort read of whatever page is current.
           pageLoadSnapshot = await bm.collectPageLoadSnapshot(page);
         }
         const metrics = bm.buildMetricsReport({
@@ -141,7 +106,6 @@ test.describe('SauceDemo UI performance journey', () => {
           contentType: 'application/json',
         });
 
-        // Optional threshold evaluation (disabled by default -> cannot fail).
         evaluateThresholds(metrics, testInfo);
       } catch (collectErr) {
         logger.error(`Failed to collect/write browser metrics: ${collectErr.message}`);
@@ -150,42 +114,35 @@ test.describe('SauceDemo UI performance journey', () => {
   });
 });
 
-/**
- * Optional, disabled-by-default threshold evaluation.
- *
- * A disabled threshold can never fail the build. When enabled, invalid input is
- * rejected and each failing metric is reported explicitly with the overshoot.
- */
+// Thresholds are disabled by default. When enabled, a breach is recorded as a
+// test annotation rather than thrown, so the functional journey result stays
+// the authoritative pass/fail signal.
 function evaluateThresholds(metrics, testInfo) {
   if (!config.thresholds.enabled) return;
 
-  const checks = [];
-  const lcp = metrics.metrics.largestContentfulPaintMs;
-  const cls = metrics.metrics.cumulativeLayoutShift;
-  const journey = metrics.metrics.interactionTimings['total-journey-duration'];
-
-  if (config.thresholds.lcpMs !== null) {
-    checks.push({ metric: 'lcpMs', actual: lcp, max: config.thresholds.lcpMs });
-  }
-  if (config.thresholds.cls !== null) {
-    checks.push({ metric: 'cls', actual: cls, max: config.thresholds.cls });
-  }
-  if (config.thresholds.journeyMs !== null) {
-    checks.push({ metric: 'journeyMs', actual: journey, max: config.thresholds.journeyMs });
-  }
+  const checks = [
+    { metric: 'lcpMs', actual: metrics.metrics.largestContentfulPaintMs, max: config.thresholds.lcpMs },
+    { metric: 'cls', actual: metrics.metrics.cumulativeLayoutShift, max: config.thresholds.cls },
+    {
+      metric: 'journeyMs',
+      actual: metrics.metrics.interactionTimings['total-journey-duration'],
+      max: config.thresholds.journeyMs,
+    },
+  ];
 
   for (const check of checks) {
+    if (check.max === null || check.max === undefined) continue;
     if (check.actual === null || check.actual === undefined) {
       logger.warn(`Threshold ${check.metric} enabled but metric unavailable; skipping.`);
       continue;
     }
-    if (check.actual > check.max) {
-      const overshoot = +(check.actual - check.max).toFixed(3);
-      const message = `Performance threshold FAILED: ${check.metric}=${check.actual} exceeds max=${check.max} by ${overshoot}`;
-      logger.error(message);
-      testInfo.annotations.push({ type: 'performance-threshold', description: message });
-    } else {
+    if (check.actual <= check.max) {
       logger.info(`Performance threshold OK: ${check.metric}=${check.actual} <= max=${check.max}`);
+      continue;
     }
+    const overshoot = +(check.actual - check.max).toFixed(3);
+    const message = `Performance threshold FAILED: ${check.metric}=${check.actual} exceeds max=${check.max} by ${overshoot}`;
+    logger.error(message);
+    testInfo.annotations.push({ type: 'performance-threshold', description: message });
   }
 }

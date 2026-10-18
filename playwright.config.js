@@ -4,23 +4,12 @@ const { defineConfig, devices } = require('@playwright/test');
 const path = require('path');
 const config = require('./src/config');
 
-/**
- * Playwright configuration.
- *
- * Reporters produce the three required formats:
- *   - HTML  -> reports/playwright/html
- *   - JSON  -> reports/playwright/results.json
- *   - JUnit -> reports/junit/results.xml
- *
- * Raw per-run artifacts (traces, screenshots) go into reports/raw/<runId>.
- * Artifacts are only kept on failure to avoid bulky output.
- */
 module.exports = defineConfig({
   testDir: './tests',
   timeout: 120_000,
   expect: { timeout: 15_000 },
 
-  // A single-user journey; keep execution deterministic and sequential.
+  // A single-user journey: keep execution sequential and deterministic.
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -36,6 +25,8 @@ module.exports = defineConfig({
   use: {
     baseURL: config.baseUrl,
     headless: true,
+    // SauceDemo exposes its hooks as data-test, not Playwright's default data-testid.
+    testIdAttribute: 'data-test',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'off',

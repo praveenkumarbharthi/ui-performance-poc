@@ -77,10 +77,12 @@ Say clearly:
 
 ```powershell
 npm run lighthouse
-start reports\lighthouse\lighthouse-report.html
+start reports\lighthouse\login.report.html
 ```
 
-Point out the category scores (Performance / Accessibility / Best Practices / SEO) and the lab
+Point out the per-page table in `reports\lighthouse\summary.json` (login + the authenticated
+product-detail and cart pages, audited with a session cookie) and the category scores
+(Performance / Accessibility / Best Practices / SEO) and the lab
 metrics (LCP, CLS, FCP, Speed Index, TBT).
 
 Say clearly:
@@ -125,5 +127,5 @@ End with the ask: a non-production environment and a JMeter correlation exercise
 | --- | --- | --- |
 | Journey | `npm run test:ui` | `reports/playwright/html/index.html` |
 | Metrics | `npm run report` | `reports/SUMMARY.md`, `reports/summary.json` |
-| Lighthouse | `npm run lighthouse` | `reports/lighthouse/lighthouse-report.html` |
+| Lighthouse | `npm run lighthouse` | `reports/lighthouse/<page>.report.html`, `reports/lighthouse/summary.json` |
 | Everything | `npm run all` | all of the above |

@@ -1,20 +1,3 @@
-# -----------------------------------------------------------------------------
-# run-all.ps1
-# Full workflow in a predictable order, preserving and reporting exit codes:
-#   1. UI journey (Playwright)         -> npm run test:ui
-#   2. Lighthouse audit                -> npm run lighthouse
-#   3. Consolidated summary            -> npm run report
-#   4. Report validation               -> npm run validate:reports
-#
-# A single shared RUN_ID is exported so every stage writes/reads the same run.
-# Partial failures are reported clearly; the process exits non-zero if any
-# critical stage failed. Lighthouse failures are reported and (unless STRICT)
-# do not mask a successful UI journey.
-#
-# Usage (from the project root):
-#   powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-all.ps1
-# -----------------------------------------------------------------------------
-
 $ErrorActionPreference = 'Continue'
 
 if (-not $env:RUN_ID -or $env:RUN_ID.Trim() -eq '') {
@@ -24,17 +7,15 @@ Write-Host "Run ID: $env:RUN_ID"
 
 $results = [ordered]@{}
 
-# Runs a stage and records its exit code in $results. No shell string is ever
-# evaluated: the caller passes a scriptblock, avoiding injection risk.
+# Stages are passed as scriptblocks so no shell string is ever evaluated
+# (avoids injection) and the stage exit code is captured reliably.
 function Invoke-Stage {
     param(
         [string]$Name,
         [scriptblock]$Action
     )
     Write-Host ''
-    Write-Host '---------------------------------------------'
-    Write-Host " STAGE: $Name"
-    Write-Host '---------------------------------------------'
+    Write-Host "STAGE: $Name"
     & $Action
     $code = $LASTEXITCODE
     $script:results[$Name] = $code
@@ -51,8 +32,8 @@ $uiExit = $results['UI journey']
 Invoke-Stage -Name 'Lighthouse audit' -Action { npm run lighthouse }
 $lhExit = $results['Lighthouse audit']
 
-# Always generate the summary + validation, even if earlier stages failed,
-# so operators get maximum evidence about what happened.
+# Always generate the summary + validation, even after an earlier failure, so
+# operators get maximum evidence about what happened.
 Invoke-Stage -Name 'Report summary'   -Action { npm run report }
 $reportExit = $results['Report summary']
 
@@ -60,18 +41,15 @@ Invoke-Stage -Name 'Validate reports' -Action { npm run validate:reports }
 $validateExit = $results['Validate reports']
 
 Write-Host ''
-Write-Host '============================================='
-Write-Host ' Workflow summary'
-Write-Host '============================================='
+Write-Host 'Workflow summary'
 foreach ($entry in $results.GetEnumerator()) {
     $status = if ($entry.Value -eq 0) { 'PASS' } else { 'FAIL' }
     Write-Host ("  {0,-20} {1} (exit {2})" -f $entry.Key, $status, $entry.Value)
 }
 Write-Host ''
 
-# Determine overall exit code.
-# Critical stages: UI journey, report summary, report validation.
-# Lighthouse is reported separately (network/browser dependent).
+# Critical stages: UI journey, report summary, report validation. Lighthouse is
+# reported separately (network/browser dependent) and only fails under STRICT=1.
 $criticalFailed = ($uiExit -ne 0) -or ($reportExit -ne 0) -or ($validateExit -ne 0)
 
 if ($criticalFailed) {

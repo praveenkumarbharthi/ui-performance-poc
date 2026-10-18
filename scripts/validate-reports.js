@@ -1,13 +1,8 @@
 'use strict';
 
-/**
- * Validates that the expected report artifacts exist, are non-empty, and parse
- * correctly as JSON / XML / HTML. Used as a quality gate in `npm run all`.
- *
- * Exit code: 0 when all checks pass, 1 when any required check fails.
- * Optional artifacts (e.g. Lighthouse when the audit could not run) produce a
- * warning but do not fail the build unless --strict is passed.
- */
+// Quality gate for the expected report artifacts: exist, non-empty, and parse
+// as JSON / XML / HTML. Exit codes: 0 = all required checks pass, 1 = a required
+// check failed. Optional artifacts only warn unless --strict is passed.
 
 const fs = require('fs');
 const path = require('path');
@@ -59,6 +54,45 @@ function checkHtmlDir(label, dir, { optional = false } = {}) {
   return checkHtml(label, index, { optional });
 }
 
+// Validates the Lighthouse summary plus every per-page report it references.
+function checkLighthouse(label, dir, { optional = false } = {}) {
+  const summaryFile = path.join(dir, 'summary.json');
+  const base = checkJson(label, summaryFile, { optional });
+  if (!base.ok) return base;
+
+  let summary;
+  try {
+    summary = JSON.parse(fs.readFileSync(summaryFile, 'utf8'));
+  } catch (err) {
+    return { ...base, ok: false, reason: `invalid-json: ${err.message}` };
+  }
+
+  const pages = Array.isArray(summary.pages) ? summary.pages : [];
+  if (pages.length === 0) {
+    return { ...base, ok: false, reason: 'no page results in summary' };
+  }
+
+  const ok = pages.filter((pg) => pg.status === 'ok');
+  if (ok.length === 0) {
+    return { ...base, ok: false, reason: `all ${pages.length} page audit(s) failed` };
+  }
+
+  const missing = [];
+  for (const pg of ok) {
+    for (const kind of ['html', 'json']) {
+      const relPath = pg.reports && pg.reports[kind];
+      if (!relPath) continue;
+      const abs = path.join(config.projectRoot, relPath);
+      if (!fs.existsSync(abs) || fs.statSync(abs).size === 0) missing.push(relPath);
+    }
+  }
+  if (missing.length > 0) {
+    return { ...base, ok: false, reason: `missing page report(s): ${missing.join(', ')}` };
+  }
+
+  return { ...base, reason: `valid-json (${ok.length}/${pages.length} pages, reports present)` };
+}
+
 function main() {
   const p = config.paths;
   const checks = [
@@ -66,9 +100,7 @@ function main() {
     checkJson('Playwright JSON report', p.playwright.json),
     checkXml('JUnit XML report', p.junit),
     checkJson('Merged browser metrics JSON', p.browserMetrics),
-    checkHtml('Lighthouse HTML report', path.join(p.lighthouse, 'lighthouse-report.html'), { optional: true }),
-    checkJson('Lighthouse JSON report', path.join(p.lighthouse, 'lighthouse-report.json'), { optional: true }),
-    checkJson('Lighthouse summary JSON', path.join(p.lighthouse, 'summary.json'), { optional: true }),
+    checkLighthouse('Lighthouse page audit', p.lighthouse, { optional: true }),
     checkJson('Consolidated summary JSON', p.summaryJson),
     checkFile('Markdown summary', p.summaryMarkdown),
   ];

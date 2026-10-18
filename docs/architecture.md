@@ -14,7 +14,7 @@ JMeter exercises protocols and backend capacity; this project exercises a **real
 | Logger | [src/logger.js](../src/logger.js) | Dependency-free levelled logging; optional file append |
 | Browser metrics | [src/browser-metrics.js](../src/browser-metrics.js) | Injects PerformanceObservers, collects Navigation/Paint/LCP/CLS + interaction timings |
 | Journey test | [tests/sauce-demo-journey.spec.js](../tests/sauce-demo-journey.spec.js) | The Playwright UI journey with assertions and metric capture |
-| Lighthouse audit | [src/lighthouse-audit.js](../src/lighthouse-audit.js) | Independent headless-Chrome lab audit of the login page |
+| Lighthouse audit | [src/lighthouse-audit.js](../src/lighthouse-audit.js) | Independent headless-Chrome lab audit of every configured page (multi-page) |
 | Report summary | [src/report-summary.js](../src/report-summary.js) | Merges all artifacts into `summary.json` + `SUMMARY.md`; threshold/baseline logic |
 | Validation | [scripts/validate-reports.js](../scripts/validate-reports.js) | Verifies artifacts exist, are non-empty, and parse |
 | Orchestration | [scripts/run-all.ps1](../scripts/run-all.ps1) | Runs all stages in order with a shared run id |
@@ -38,8 +38,9 @@ flowchart TD
     F5 -- no --> G
 
     E --> H[Stage: Lighthouse audit - headless Chrome]
-    H --> H1[Audit https://www.saucedemo.com/ login page]
-    H1 --> H2[reports/lighthouse/lighthouse-report.html + .json + summary.json]
+    H --> H1[Audit each configured page - login plus authenticated pages]
+    H01[Playwright login -> session cookie] --> H1
+    H1 --> H2[reports/lighthouse/ per-page .report.html + .json, plus summary.json]
     H1 --> H3{Audit failed?}
     H3 -- yes --> H4[Record failure in summary.json - build unstable]
 

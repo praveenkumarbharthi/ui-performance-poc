@@ -3,8 +3,8 @@
 ## What this PoC is
 
 A **single-user, browser-level UI performance proof of concept**. It drives one real Chromium session
-through a SauceDemo purchase journey and runs a Lighthouse lab audit of the login page, producing
-HTML/JSON/JUnit/Markdown reports.
+through a SauceDemo purchase journey and runs a multi-page Lighthouse lab audit (public and
+authenticated pages), producing HTML/JSON/JUnit/Markdown reports.
 
 ## What this PoC is NOT
 

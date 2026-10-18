@@ -72,7 +72,8 @@ recorded for traceability.
 
 ## Lighthouse metrics (lab audit)
 
-Produced by [src/lighthouse-audit.js](../src/lighthouse-audit.js) for the **public login page only**.
+Produced by [src/lighthouse-audit.js](../src/lighthouse-audit.js) for **each configured page** — the
+public login page and any pages behind it, audited with a session cookie.
 
 | Metric | Meaning | Caveats |
 | --- | --- | --- |

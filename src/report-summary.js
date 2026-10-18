@@ -1,19 +1,10 @@
 'use strict';
 
-/**
- * Consolidates all run artifacts into:
- *   - reports/summary.json          (machine-readable consolidated summary)
- *   - reports/SUMMARY.md            (human-readable summary)
- *   - reports/browser-metrics/browser-metrics.json (merged latest metrics)
- *
- * Also performs OPTIONAL baseline comparison (only when a valid, comparable
- * baseline file exists) and reports partial failures clearly.
- *
- * Exit code contract:
- *   0 - summary generated; no functional failures and no enabled-threshold failures
- *   1 - functional test failures OR enabled performance-threshold failures
- *   2 - infrastructure failure while generating the summary itself
- */
+// Consolidates run artifacts into reports/summary.json, reports/SUMMARY.md and
+// reports/browser-metrics/browser-metrics.json, then optionally compares against
+// a baseline.
+//
+// Exit codes: 0 = ok, 1 = functional or threshold failure, 2 = infrastructure failure.
 
 const fs = require('fs');
 const path = require('path');
@@ -38,10 +29,8 @@ function readJsonIfExists(file) {
   }
 }
 
-/**
- * Resolve the run id: prefer an explicitly supplied RUN_ID, else the most recent
- * raw run directory (so standalone `npm run report` finds the latest evidence).
- */
+// Prefer an explicit RUN_ID; otherwise fall back to the most recent raw run
+// directory so a standalone `npm run report` finds the latest evidence.
 function resolveRunId() {
   if (config.runIdFromEnv) return config.runId;
   const rawRoot = config.paths.raw;
@@ -56,7 +45,6 @@ function resolveRunId() {
   return null;
 }
 
-/** Flatten Playwright specs into a compact list of test outcomes. */
 function flattenPlaywrightSpecs(report) {
   const tests = [];
   function walkSuites(suites, parentTitles) {
@@ -64,11 +52,10 @@ function flattenPlaywrightSpecs(report) {
       const titles = parentTitles.concat(suite.title ? [suite.title] : []);
       for (const spec of suite.specs || []) {
         const title = titles.concat(spec.title ? [spec.title] : []).join(' > ');
-        const results = spec.tests || [];
         let status = spec.ok ? 'passed' : 'failed';
         let durationMs = 0;
         let error = null;
-        for (const t of results) {
+        for (const t of spec.tests || []) {
           for (const r of t.results || []) {
             durationMs += r.duration || 0;
             if (r.status && r.status !== 'passed') status = r.status;
@@ -85,22 +72,16 @@ function flattenPlaywrightSpecs(report) {
 }
 
 function collectBrowserMetrics(runId) {
-  const dir = runId
-    ? path.join(config.paths.raw, runId, 'browser-metrics')
-    : null;
+  const dir = runId ? path.join(config.paths.raw, runId, 'browser-metrics') : null;
   const files = [];
   if (dir && fs.existsSync(dir)) {
     for (const name of fs.readdirSync(dir)) {
       if (name.endsWith('.json')) files.push(path.join(dir, name));
     }
   }
-  const metrics = files
-    .map((f) => readJsonIfExists(f))
-    .filter(Boolean);
-  return metrics;
+  return files.map((f) => readJsonIfExists(f)).filter(Boolean);
 }
 
-/** Persist the merged, latest browser metrics for external consumers. */
 function writeMergedMetrics(metricsList) {
   const merged = {
     schemaVersion: '1.0',
@@ -113,20 +94,28 @@ function writeMergedMetrics(metricsList) {
   return config.paths.browserMetrics;
 }
 
-/** Evaluate enabled thresholds. Disabled thresholds can never fail. */
+// Disabled thresholds can never fail the build.
 function evaluateThresholds(metricsList) {
   const result = { enabled: config.thresholds.enabled, checks: [], failures: [] };
   if (!config.thresholds.enabled) return result;
 
   const first = metricsList[0];
-  const lcp = first ? first.metrics.largestContentfulPaintMs : null;
-  const cls = first ? first.metrics.cumulativeLayoutShift : null;
-  const journey = first ? first.metrics.interactionTimings['total-journey-duration'] : null;
-
   const defs = [
-    { metric: 'lcpMs', actual: lcp, max: config.thresholds.lcpMs },
-    { metric: 'cls', actual: cls, max: config.thresholds.cls },
-    { metric: 'journeyMs', actual: journey, max: config.thresholds.journeyMs },
+    {
+      metric: 'lcpMs',
+      actual: first ? first.metrics.largestContentfulPaintMs : null,
+      max: config.thresholds.lcpMs,
+    },
+    {
+      metric: 'cls',
+      actual: first ? first.metrics.cumulativeLayoutShift : null,
+      max: config.thresholds.cls,
+    },
+    {
+      metric: 'journeyMs',
+      actual: first ? first.metrics.interactionTimings['total-journey-duration'] : null,
+      max: config.thresholds.journeyMs,
+    },
   ];
 
   for (const def of defs) {
@@ -152,7 +141,7 @@ function evaluateThresholds(metricsList) {
   return result;
 }
 
-/** Optional baseline comparison - only when a valid, comparable baseline exists. */
+// Optional baseline comparison - only when a valid, comparable baseline exists.
 function compareBaseline(currentSummary) {
   const file = config.baseline.file;
   const result = { attempted: fs.existsSync(file), comparable: false, warnings: [], deltas: [] };
@@ -240,9 +229,9 @@ function buildMarkdown(summary) {
   lines.push('');
   if (summary.browserMetrics.length) {
     const m = summary.browserMetrics[0];
+    const nav = m.metrics.navigation || {};
     lines.push('| Metric | Value | Available |');
     lines.push('| --- | --- | --- |');
-    const nav = m.metrics.navigation || {};
     lines.push(`| FCP (ms) | ${fmt(m.metrics.firstContentfulPaintMs)} | ${m.metrics.firstContentfulPaintMs !== null} |`);
     lines.push(`| LCP (ms) | ${fmt(m.metrics.largestContentfulPaintMs)} | ${m.metrics.largestContentfulPaintMs !== null} |`);
     lines.push(`| CLS | ${fmt(m.metrics.cumulativeLayoutShift)} | ${m.metrics.cumulativeLayoutShift !== null} |`);
@@ -255,6 +244,7 @@ function buildMarkdown(summary) {
     lines.push('| Interaction | Duration (ms) |');
     lines.push('| --- | --- |');
     for (const [k, v] of Object.entries(m.metrics.interactionTimings || {})) {
+      // The overview-* entries are captured values (price/subtotal), not timings.
       if (k.startsWith('overview-')) continue;
       lines.push(`| ${k} | ${fmt(v)} |`);
     }
@@ -266,15 +256,24 @@ function buildMarkdown(summary) {
     lines.push('');
   }
 
-  lines.push('## Lighthouse (lab audit of the public login page)');
+  lines.push('## Lighthouse (lab audit, per page)');
   lines.push('');
-  if (summary.lighthouse && summary.lighthouse.available) {
-    lines.push('| Category | Score |');
-    lines.push('| --- | --- |');
-    for (const [k, v] of Object.entries(summary.lighthouse.categories || {})) {
-      lines.push(`| ${k} | ${v === null ? 'n/a' : v} |`);
+  const lhPages = summary.lighthouse ? summary.lighthouse.pages || [] : [];
+  if (lhPages.length) {
+    lines.push('| Page | Auth | Performance | Accessibility | Best practices | SEO |');
+    lines.push('| --- | --- | --- | --- | --- | --- |');
+    for (const p of lhPages) {
+      const c = p.categories || {};
+      lines.push(
+        `| ${p.name} | ${p.authenticated ? 'yes' : 'no'} | ${fmt(c.performance)} | ${fmt(c.accessibility)} | ${fmt(c['best-practices'])} | ${fmt(c.seo)} |`
+      );
     }
     lines.push('');
+    for (const p of lhPages) {
+      if (p.status === 'failed') {
+        lines.push(`- **${p.name}** failed: ${p.error || 'unknown error'}`);
+      }
+    }
     lines.push(`Lighthouse version: ${summary.lighthouse.version || 'n/a'}`);
     lines.push('');
     lines.push('> Lab audit - not real-user monitoring; not comparable to journey timings.');
@@ -358,12 +357,20 @@ function main() {
     writeMergedMetrics(metricsList);
 
     const lhSummary = readJsonIfExists(path.join(config.paths.lighthouse, 'summary.json'));
+    const lhPages = lhSummary && Array.isArray(lhSummary.pages) ? lhSummary.pages : [];
     const lighthouse = {
       available: !!lhSummary && lhSummary.status !== 'failed',
       version: lhSummary ? lhSummary.lighthouseVersion : null,
-      categories: lhSummary && lhSummary.categories
-        ? Object.fromEntries(Object.entries(lhSummary.categories).map(([k, v]) => [k, v.score]))
-        : {},
+      pages: lhPages.map((p) => ({
+        name: p.name,
+        status: p.status,
+        url: p.finalUrl || p.requestedUrl,
+        authenticated: !!p.authenticated,
+        categories: p.categories
+          ? Object.fromEntries(Object.entries(p.categories).map(([k, v]) => [k, v.score]))
+          : {},
+        error: p.error || null,
+      })),
       error: lhSummary && lhSummary.error ? lhSummary.error : null,
     };
 
@@ -395,15 +402,13 @@ function main() {
         playwrightJson: rel(config.paths.playwright.json),
         junitXml: rel(config.paths.junit),
         browserMetrics: rel(config.paths.browserMetrics),
-        lighthouseHtml: rel(path.join(config.paths.lighthouse, 'lighthouse-report.html')),
-        lighthouseJson: rel(path.join(config.paths.lighthouse, 'lighthouse-report.json')),
+        lighthouseReports: rel(config.paths.lighthouse),
         lighthouseSummary: rel(path.join(config.paths.lighthouse, 'summary.json')),
       },
     };
 
     summary.baseline = compareBaseline(summary);
 
-    // Distinguish failure types explicitly.
     const functionalFailed = tests.summary.failed > 0;
     const thresholdFailed = thresholds.enabled && thresholds.failures.length > 0;
     if (functionalFailed) summary.failureTypes.push('functional-test-failure');
