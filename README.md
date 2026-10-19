@@ -74,12 +74,12 @@ npm run check:env              # validate toolchain + configuration
 
 ## Status model
 
-Overall status is `passed`, `failed`, `unstable`, or `no-data`. Functional failures and enforced
-threshold breaches (`PERF_THRESHOLDS_ENABLED=true`) fail the build; a failed or partial Lighthouse
-audit, or missing evidence, yields `unstable` so incomplete runs are never mistaken for success.
-An enforced threshold whose metric is unavailable downgrades the run to `unstable`; set
-`THRESHOLDS_STRICT=true` to fail it instead. Thresholds are observation-only until enabled with an
-agreed baseline.
+Overall status is `passed`, `failed`, `unstable`, or `no-data`. Performance thresholds are enforced
+by default with documented PoC targets (LCP <= 2500ms, CLS <= 0.1, single-user journey <= 8000ms); set
+`PERF_THRESHOLDS_ENABLED=false` for observation-only mode. Functional failures and threshold breaches
+fail the build; a failed or partial Lighthouse audit, or missing evidence, yields `unstable` so
+incomplete runs are never mistaken for success. An enforced threshold whose metric is unavailable
+downgrades the run to `unstable`; set `THRESHOLDS_STRICT=true` to fail it instead.
 
 `Jenkinsfile`: Windows-agent pipeline - run marker, tool/config checks, `npm ci`, unit tests,
 `npm audit --audit-level=high`, Chromium install, journey, Lighthouse, report, validate. Evidence is

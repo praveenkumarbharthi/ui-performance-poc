@@ -153,10 +153,54 @@ function determineStatus(input = {}) {
   return { status: STATUS.PASSED, failureTypes: [] };
 }
 
+// Per-section verdicts so a single green overall badge cannot hide a section
+// that was never enforced or produced incomplete evidence. Kept separate from
+// the overall STATUS vocabulary because "not enforced" is a meaningful state
+// that is neither a pass nor a failure.
+const SECTION_STATUS = Object.freeze({
+  PASSED: 'passed',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+  INCOMPLETE: 'incomplete',
+  NOT_ENFORCED: 'not-enforced',
+  NO_DATA: 'no-data',
+});
+
+function sectionStatuses(summary = {}) {
+  const t = (summary.tests && summary.tests.summary) || {};
+  let functional;
+  if ((t.total || 0) === 0) functional = SECTION_STATUS.NO_DATA;
+  else if ((t.failed || 0) > 0) functional = SECTION_STATUS.FAILED;
+  else functional = SECTION_STATUS.PASSED;
+
+  const lh = summary.lighthouse || {};
+  let lighthouse;
+  if (!lh.available) lighthouse = SECTION_STATUS.NO_DATA;
+  else if (lh.status === 'failed') lighthouse = SECTION_STATUS.FAILED;
+  else if (lh.status === 'unstable') lighthouse = SECTION_STATUS.INCOMPLETE;
+  // `completed` records that the audit ran to completion; it says nothing about
+  // score quality, which is reported separately (low performance scores are not
+  // a gate unless a threshold is configured for them).
+  else if (lh.status === 'ok') lighthouse = SECTION_STATUS.COMPLETED;
+  else lighthouse = SECTION_STATUS.NO_DATA;
+
+  const th = summary.thresholds || {};
+  let thresholds;
+  if (!th.enabled) thresholds = SECTION_STATUS.NOT_ENFORCED;
+  else if ((th.failures || []).length > 0) thresholds = SECTION_STATUS.FAILED;
+  else if ((th.unavailable || []).length > 0) thresholds = SECTION_STATUS.INCOMPLETE;
+  else if ((th.checks || []).some((c) => c.status === 'passed')) thresholds = SECTION_STATUS.PASSED;
+  else thresholds = SECTION_STATUS.NO_DATA;
+
+  return { functional, lighthouse, thresholds };
+}
+
 module.exports = {
   STATUS,
+  SECTION_STATUS,
   FAILURE_TYPE,
   THRESHOLD_DEFS,
   evaluateThresholds,
   determineStatus,
+  sectionStatuses,
 };

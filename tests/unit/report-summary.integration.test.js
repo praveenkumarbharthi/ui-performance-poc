@@ -103,6 +103,9 @@ function runReport(reportsDir, extraEnv = {}) {
     ...process.env,
     REPORTS_DIR: reportsDir,
     RUN_ID,
+    // Thresholds are enforced by default in config; most tests here target other
+    // behaviours, so disable them unless a test opts in explicitly (extraEnv wins).
+    PERF_THRESHOLDS_ENABLED: 'false',
     ...extraEnv,
   };
   try {
@@ -161,11 +164,27 @@ test('fails the build on an enforced threshold breach', () => {
   const { code } = runReport(reportsDir, {
     PERF_THRESHOLDS_ENABLED: 'true',
     THRESHOLD_LCP_MS: '2500',
+    THRESHOLD_JOURNEY_MS: '100000',
   });
   const summary = readSummary(reportsDir);
   assert.equal(summary.status, 'failed');
   assert.equal(code, 1);
   assert.ok(summary.failureTypes.includes('performance-threshold-failure'));
+});
+
+test('enforces the default threshold limits when enabled without explicit values', () => {
+  const reportsDir = makeReportsDir();
+  writeJson(path.join(reportsDir, 'playwright', 'results.json'), playwrightResults());
+  // metricsRun defaults to a 9000ms journey, which breaches the 8000ms default.
+  writeMetrics(reportsDir, RUN_ID, metricsRun(RUN_ID));
+  writeJson(path.join(reportsDir, 'lighthouse', 'summary.json'), lighthouseSummary());
+  const { code } = runReport(reportsDir, { PERF_THRESHOLDS_ENABLED: 'true' });
+  const summary = readSummary(reportsDir);
+  assert.equal(summary.status, 'failed');
+  assert.equal(code, 1);
+  const journey = summary.thresholds.checks.find((c) => c.metric === 'journeyMs');
+  assert.equal(journey.status, 'failed');
+  assert.equal(journey.max, 8000);
 });
 
 test('is unstable (not passed) when an enabled threshold metric is missing', () => {
@@ -176,6 +195,7 @@ test('is unstable (not passed) when an enabled threshold metric is missing', () 
   const { code } = runReport(reportsDir, {
     PERF_THRESHOLDS_ENABLED: 'true',
     THRESHOLD_LCP_MS: '2500',
+    THRESHOLD_JOURNEY_MS: '100000',
   });
   const summary = readSummary(reportsDir);
   assert.equal(summary.status, 'unstable');
@@ -192,6 +212,7 @@ test('fails the build when a strict threshold metric is missing', () => {
     PERF_THRESHOLDS_ENABLED: 'true',
     THRESHOLDS_STRICT: 'true',
     THRESHOLD_LCP_MS: '2500',
+    THRESHOLD_JOURNEY_MS: '100000',
   });
   const summary = readSummary(reportsDir);
   assert.equal(summary.status, 'failed');

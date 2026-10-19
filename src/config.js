@@ -107,15 +107,19 @@ const config = {
     throttlingMethod: 'simulate',
   },
 
-  // Disabled by default (observation mode); a disabled threshold cannot fail a build.
+  // Enforced by default with documented PoC targets, so a run produces a real
+  // pass/fail instead of an unevaluated "passed". Set PERF_THRESHOLDS_ENABLED=false
+  // for observation-only mode (a disabled threshold can never fail a build).
   thresholds: {
-    enabled: envBool(process.env.PERF_THRESHOLDS_ENABLED, false),
+    enabled: envBool(process.env.PERF_THRESHOLDS_ENABLED, true),
     // When strict, a configured threshold whose metric is unavailable fails the
     // gate instead of downgrading the run to unstable.
     strict: envBool(process.env.THRESHOLDS_STRICT, false),
-    lcpMs: envNum(process.env.THRESHOLD_LCP_MS, null),
-    cls: envNum(process.env.THRESHOLD_CLS, null),
-    journeyMs: envNum(process.env.THRESHOLD_JOURNEY_MS, null),
+    // Defaults follow Core Web Vitals "good" bands (LCP <= 2.5s, CLS <= 0.1) plus a
+    // generous single-user journey budget.
+    lcpMs: envNum(process.env.THRESHOLD_LCP_MS, 2500),
+    cls: envNum(process.env.THRESHOLD_CLS, 0.1),
+    journeyMs: envNum(process.env.THRESHOLD_JOURNEY_MS, 8000),
   },
 
   // Only honoured when the baseline file exists and is comparable.

@@ -22,7 +22,7 @@ pipeline {
     SAUCE_USERNAME          = "${env.SAUCE_USERNAME ?: 'standard_user'}"
     SAUCE_PASSWORD          = "${env.SAUCE_PASSWORD ?: 'secret_sauce'}"
     PLAYWRIGHT_BROWSER      = 'chromium'
-    PERF_THRESHOLDS_ENABLED = "${env.PERF_THRESHOLDS_ENABLED ?: 'false'}"
+    PERF_THRESHOLDS_ENABLED = "${env.PERF_THRESHOLDS_ENABLED ?: 'true'}"
     // Strict thresholds: an enforced threshold whose metric is unavailable fails the gate.
     THRESHOLDS_STRICT       = "${env.THRESHOLDS_STRICT ?: 'false'}"
     // Unique run id so raw artifacts never overwrite previous evidence.

@@ -166,6 +166,23 @@ function buildMarkdown(summary) {
     }`
   );
   lines.push('');
+  const ss = summary.sectionStatuses || {};
+  lines.push('## Run verdicts');
+  lines.push('');
+  lines.push('| Section | Verdict |');
+  lines.push('| --- | --- |');
+  lines.push(`| Functional tests | ${ss.functional || 'n/a'} |`);
+  lines.push(`| Lighthouse audits | ${ss.lighthouse || 'n/a'} |`);
+  lines.push(`| Performance thresholds | ${ss.thresholds || 'n/a'} |`);
+  lines.push('');
+  if (summary.thresholds && !summary.thresholds.enabled) {
+    lines.push(
+      '> This run passed its functional journey and Lighthouse audits, but performance thresholds are ' +
+        'disabled, so it does not yet prove the application meets defined performance targets. The result ' +
+        'is a single observation.'
+    );
+    lines.push('');
+  }
   lines.push('## Test outcomes');
   lines.push('');
   lines.push(`- Passed: ${summary.tests.summary.passed}`);
@@ -238,10 +255,18 @@ function buildMarkdown(summary) {
   const lh = summary.lighthouse || {};
   const lhPages = lh.pages || [];
   if (lhPages.length || lh.available) {
-    lines.push(`- Lighthouse status: ${fmt(lh.status)}`);
+    lines.push(`- Lighthouse execution: ${fmt(lh.status)} (completion, not score quality)`);
     if (lh.outcomes) {
       lines.push(
         `- Outcomes: ok=${lh.outcomes.ok} failed=${lh.outcomes.failed} skipped=${lh.outcomes.skipped} of ${lh.outcomes.total}`
+      );
+    }
+    const perfScores = lhPages
+      .map((p) => (p.categories || {}).performance)
+      .filter((v) => typeof v === 'number');
+    if (perfScores.length) {
+      lines.push(
+        `- Lowest performance score: ${Math.round(Math.min(...perfScores) * 100)}/100 (informational; not gated)`
       );
     }
     lines.push('');
@@ -502,6 +527,9 @@ function main() {
     summary.functionalFailures = functionalFailures;
     summary.thresholdFailed = thresholdFailed;
     summary.thresholdUnavailable = thresholdUnavailable;
+    // Per-section verdicts so the JSON artifact carries the same "not enforced vs
+    // passed" distinction the dashboard renders, instead of one green overall badge.
+    summary.sectionStatuses = gate.sectionStatuses(summary);
 
     fs.mkdirSync(path.dirname(config.paths.summaryJson), { recursive: true });
     fs.writeFileSync(config.paths.summaryJson, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');

@@ -159,3 +159,69 @@ test('determineStatus passes only with complete evidence', () => {
   assert.equal(result.status, gate.STATUS.PASSED);
   assert.deepEqual(result.failureTypes, []);
 });
+
+const S = gate.SECTION_STATUS;
+
+test('sectionStatuses reports functional passed / failed / no-data separately', () => {
+  const base = { lighthouse: { available: false }, thresholds: { enabled: false } };
+  assert.equal(
+    gate.sectionStatuses({ ...base, tests: { summary: { total: 0, failed: 0 } } }).functional,
+    S.NO_DATA
+  );
+  assert.equal(
+    gate.sectionStatuses({ ...base, tests: { summary: { total: 2, failed: 0 } } }).functional,
+    S.PASSED
+  );
+  assert.equal(
+    gate.sectionStatuses({ ...base, tests: { summary: { total: 2, failed: 1 } } }).functional,
+    S.FAILED
+  );
+});
+
+test('sectionStatuses maps Lighthouse available/ok/failed/unstable distinctly', () => {
+  const s = { tests: { summary: { total: 1, failed: 0 } }, thresholds: { enabled: false } };
+  assert.equal(
+    gate.sectionStatuses({ ...s, lighthouse: { available: false } }).lighthouse,
+    S.NO_DATA
+  );
+  // A completed audit is reported as `completed`, not `passed`: it says nothing
+  // about score quality (a page may still score low).
+  assert.equal(
+    gate.sectionStatuses({ ...s, lighthouse: { available: true, status: 'ok' } }).lighthouse,
+    S.COMPLETED
+  );
+  assert.equal(
+    gate.sectionStatuses({ ...s, lighthouse: { available: true, status: 'failed' } }).lighthouse,
+    S.FAILED
+  );
+  assert.equal(
+    gate.sectionStatuses({ ...s, lighthouse: { available: true, status: 'unstable' } }).lighthouse,
+    S.INCOMPLETE
+  );
+});
+
+test('sectionStatuses reports thresholds as not-enforced, never a silent pass', () => {
+  const s = { tests: { summary: { total: 1, failed: 0 } }, lighthouse: { available: true, status: 'ok' } };
+  assert.equal(gate.sectionStatuses({ ...s, thresholds: { enabled: false } }).thresholds, S.NOT_ENFORCED);
+  assert.equal(
+    gate.sectionStatuses({
+      ...s,
+      thresholds: { enabled: true, failures: [{ metric: 'lcpMs' }], checks: [], unavailable: [] },
+    }).thresholds,
+    S.FAILED
+  );
+  assert.equal(
+    gate.sectionStatuses({
+      ...s,
+      thresholds: { enabled: true, failures: [], checks: [], unavailable: [{ metric: 'lcpMs' }] },
+    }).thresholds,
+    S.INCOMPLETE
+  );
+  assert.equal(
+    gate.sectionStatuses({
+      ...s,
+      thresholds: { enabled: true, failures: [], unavailable: [], checks: [{ status: 'passed' }] },
+    }).thresholds,
+    S.PASSED
+  );
+});
