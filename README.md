@@ -83,4 +83,7 @@ downgrades the run to `unstable`; set `THRESHOLDS_STRICT=true` to fail it instea
 
 `Jenkinsfile`: Windows-agent pipeline - run marker, tool/config checks, `npm ci`, unit tests,
 `npm audit --audit-level=high`, Chromium install, journey, Lighthouse, report, validate. Evidence is
-published even on failure via `catchError`, JUnit, and archived `reports/`.
+published even on failure via `catchError`, JUnit, and archived `reports/`. 
+
+DashBoard html: <img width="954" height="915" alt="image" src="https://github.com/user-attachments/assets/562ef018-8502-4e67-9fb8-391945ac4d0c" />
+
