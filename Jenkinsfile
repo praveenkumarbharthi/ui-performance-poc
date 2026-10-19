@@ -52,8 +52,9 @@ pipeline {
         bat 'npm -v'
         // Fails the stage if the Node/npm toolchain does not meet requirements.
         bat 'node scripts/check-env.js --tools-only'
-        // Chrome is optional: chrome-launcher auto-detects it, else bundled Chromium is used.
-        bat 'if exist "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe" (echo Chrome: found) else (echo Chrome: NOT found - Lighthouse will rely on bundled Chromium)'
+        // Chrome is optional: the audit prefers a system Chrome, then falls back to
+        // Playwright's bundled Chromium (installed by the step above).
+        bat 'if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" (echo Chrome: found) else (echo Chrome: NOT found - Lighthouse will use Playwright-bundled Chromium)'
       }
     }
 

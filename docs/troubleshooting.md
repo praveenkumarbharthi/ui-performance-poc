@@ -114,7 +114,24 @@ the overall exit code stays `0` unless you set `STRICT=1`:
 $env:STRICT = "1"; npm run all
 ```
 
+The workflow inspects the `status` field in `reports/lighthouse/summary.json` (not just the process
+exit code), so a **partial** audit (`status: unstable` — some pages failed or were skipped) is
+reported as INCOMPLETE even though the process exits `0`. `STRICT=1` turns both the incomplete and
+the failed cases into a non-zero exit code.
+
 Check `reports/lighthouse/summary.json` — it records the exact error instead of fabricating scores.
+
+## `No Chrome/Chromium executable available for Lighthouse`
+
+The audit resolves the browser explicitly, in this order:
+
+1. `CHROME_PATH`, if set (must point to an existing executable);
+2. a system Chrome installation;
+3. Playwright's bundled Chromium.
+
+If none is found it fails early with this message instead of a generic launcher crash. Fix it by
+installing Google Chrome, setting `CHROME_PATH`, or running `npx playwright install chromium`.
+A `CHROME_PATH` that points to a missing file fails the same way.
 
 ## Reports look stale or show `no-data`
 

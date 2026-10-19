@@ -84,6 +84,47 @@ async function seedSessionCookies(port, cookies) {
   }
 }
 
+// chrome-launcher only discovers a *system* Chrome install; it does not know about
+// Playwright's bundled Chromium. Resolve an explicit executable so the audit runs
+// with a known browser, or fails early with actionable setup guidance instead of a
+// generic "no Chrome installations found" crash.
+function resolveChromeExecutable(chromeLauncher) {
+  const configured = config.lighthouse.chromePath;
+  if (configured) {
+    if (fs.existsSync(configured)) return configured;
+    throw new Error(
+      `CHROME_PATH points to "${configured}" but no executable exists there. Fix the path, ` +
+        'unset CHROME_PATH, or run "npx playwright install chromium".'
+    );
+  }
+
+  let system = null;
+  try {
+    if (chromeLauncher.Launcher && typeof chromeLauncher.Launcher.getFirstInstallation === 'function') {
+      system = chromeLauncher.Launcher.getFirstInstallation();
+    }
+  } catch (err) {
+    system = null;
+  }
+  if (system && fs.existsSync(system)) return system;
+
+  let bundled = null;
+  try {
+    bundled = require('playwright').chromium.executablePath();
+  } catch (err) {
+    bundled = null;
+  }
+  if (bundled && fs.existsSync(bundled)) {
+    logger.info(`No system Chrome found; using Playwright-bundled Chromium at ${bundled}`);
+    return bundled;
+  }
+
+  throw new Error(
+    'No Chrome/Chromium executable available for Lighthouse. Install Google Chrome, set ' +
+      'CHROME_PATH to a Chrome/Chromium binary, or run "npx playwright install chromium".'
+  );
+}
+
 async function auditPage(lighthouse, port, pageDef, keepStorage) {
   const url = pageUrl(pageDef);
   const options = {
@@ -236,8 +277,12 @@ async function run() {
     }
 
     const chromeLauncher = await loadChromeLauncher();
-    const launchOptions = { chromeFlags: config.lighthouse.chromeFlags };
-    if (config.lighthouse.chromePath) launchOptions.chromePath = config.lighthouse.chromePath;
+    const launchOptions = {
+      chromeFlags: config.lighthouse.chromeFlags,
+      // Always explicit: an absent system Chrome falls back to Playwright's
+      // bundled Chromium, or throws the setup guidance above.
+      chromePath: resolveChromeExecutable(chromeLauncher),
+    };
 
     chrome = await chromeLauncher.launch(launchOptions);
     logger.info(`Chrome launched on port ${chrome.port}`);

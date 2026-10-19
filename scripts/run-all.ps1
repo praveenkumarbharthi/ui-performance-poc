@@ -42,6 +42,20 @@ $uiExit = $results['UI journey']
 Invoke-Stage -Name 'Lighthouse audit' -Action { npm run lighthouse }
 $lhExit = $results['Lighthouse audit']
 
+# The audit's own summary is authoritative: a partial audit (some pages failed or
+# skipped) records status `unstable` and still exits 0, so the exit code alone
+# cannot tell a complete pass apart from an incomplete run.
+$lhStatus = 'missing'
+$lhSummaryPath = Join-Path $reportsDir 'lighthouse\summary.json'
+if (Test-Path $lhSummaryPath) {
+    try {
+        $lhStatus = [string](Get-Content -Path $lhSummaryPath -Raw -ErrorAction Stop | ConvertFrom-Json).status
+        if ([string]::IsNullOrWhiteSpace($lhStatus)) { $lhStatus = 'unknown' }
+    } catch {
+        $lhStatus = 'invalid'
+    }
+}
+
 # Always generate the summary + validation, even after an earlier failure, so
 # operators get maximum evidence about what happened.
 Invoke-Stage -Name 'Report summary'   -Action { npm run report }
@@ -56,10 +70,11 @@ foreach ($entry in $results.GetEnumerator()) {
     $status = if ($entry.Value -eq 0) { 'PASS' } else { 'FAIL' }
     Write-Host ("  {0,-20} {1} (exit {2})" -f $entry.Key, $status, $entry.Value)
 }
+Write-Host ("  {0,-20} {1}" -f 'Lighthouse status', $lhStatus)
 Write-Host ''
 
 # Critical stages: UI journey, report summary, report validation. Lighthouse is
-# reported separately (network/browser dependent) and only fails under STRICT=1.
+# reported separately (network/browser dependent).
 $criticalFailed = ($uiExit -ne 0) -or ($reportExit -ne 0) -or ($validateExit -ne 0)
 
 if ($criticalFailed) {
@@ -67,9 +82,22 @@ if ($criticalFailed) {
     exit 1
 }
 
-if ($lhExit -ne 0) {
-    Write-Host '[RESULT] UI journey passed but the Lighthouse audit failed (see reports/lighthouse/summary.json).'
-    if ($env:STRICT -eq '1') { exit 1 }
+# strict=1 promotes an incomplete or failed audit into a non-zero exit code.
+$strict = ($env:STRICT -eq '1')
+
+# A non-zero exit, or a missing/invalid/failed summary, means the audit did not
+# complete. `unstable` means it ran but only partially. Neither is a pass.
+$lhAuditFailed = ($lhExit -ne 0) -or ($lhStatus -in @('failed', 'missing', 'invalid', 'unknown'))
+
+if ($lhAuditFailed) {
+    Write-Host "[RESULT] UI journey passed but the Lighthouse audit failed (status=$lhStatus, exit=$lhExit). See reports/lighthouse/summary.json."
+    if ($strict) { exit 1 }
+    exit 0
+}
+
+if ($lhStatus -eq 'unstable') {
+    Write-Host '[RESULT] Workflow INCOMPLETE: the Lighthouse audit only partially completed (status=unstable; some pages failed or were skipped). This is not a full pass. See reports/lighthouse/summary.json.'
+    if ($strict) { exit 1 }
     exit 0
 }
 
